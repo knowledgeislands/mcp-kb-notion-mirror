@@ -1,0 +1,25 @@
+{
+  // Base: enable all rules, then selectively adjust below.
+  "config": {
+    "default": true,
+
+    // MD013 - line length: disabled. Prettier owns line length via printWidth / proseWrap.
+    "MD013": false,
+
+    // MD024 - duplicate headings: allow in sibling sections only.
+    "MD024": { "siblings_only": true },
+
+    // MD025 - single H1: ignore the frontmatter title field.
+    "MD025": { "front_matter_title": "" },
+
+    // MD033 - inline HTML: disabled. <br> is used in table cells.
+    "MD033": false,
+
+    // MD036 - bold as heading: disabled. Bold labels are used intentionally.
+    "MD036": false
+  },
+
+  "globs": ["src/**/*.md", "docs/**/*.md", "README.md", "CLAUDE.md"],
+
+  "ignores": ["dist/**", "node_modules/**"]
+}

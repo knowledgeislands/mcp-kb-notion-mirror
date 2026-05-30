@@ -1,0 +1,32 @@
+# Build output
+dist/
+
+# Coverage output
+coverage/
+
+# Dependency directories
+node_modules/
+npm-debug.log*
+
+# Environment variables — ignore everything except .env*.example templates
+.env
+.env.*
+!.env*.example
+
+# Editor directories and files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Claude Code local settings
+.claude/settings.local.json
+
+# OS specific files
+.DS_Store
+Thumbs.db
+
+# Logs
+logs
+*.log
+*.tsbuildinfo
