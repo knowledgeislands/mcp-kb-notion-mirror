@@ -18,7 +18,7 @@ import { basename, dirname, join, relative } from 'node:path'
 import type { Config } from '../config/index.js'
 import { publishNote, type UnpublishResult, unpublishNote } from '../main/mirror/index.js'
 import type { NotionParent } from '../main/notion-client/index.js'
-import { buildLinkMap, discover, iconFor, indexKbPathFor, type Note, publishOrder, readFrontmatter, resolveParent } from './discover.js'
+import { buildLinkMap, discover, discoverRoots, iconFor, indexKbPathFor, type MirrorRoot, type Note, publishOrder, readFrontmatter, resolveParent } from './discover.js'
 import type { OrchestratorSettings } from './settings.js'
 
 const PLAN_PLACEHOLDER_URL = 'https://www.notion.so/PLANNED-00000000000000000000000000000000'
@@ -57,7 +57,7 @@ export const status = (kbRoot: string, subtree: string, s: OrchestratorSettings)
   let pending = 0
   const notes = ordered.map((n) => {
     const fresh = readFrontmatter(readFileSync(n.fullPath, 'utf-8'))
-    const isPublished = Boolean(fresh.notion_mirror_url)
+    const isPublished = Boolean(fresh.kb_notion_mirror_url)
     if (isPublished) published++
     else pending++
     return { kbPath: n.kbPath, published: isPublished }
@@ -70,7 +70,7 @@ export const pass1 = async (cfg: Config, subtree: string, parent: NotionParent, 
   const urlByKbPath = new Map<string, string>()
   for (const n of notes) {
     const fresh = readFrontmatter(readFileSync(n.fullPath, 'utf-8'))
-    if (fresh.notion_mirror_url) urlByKbPath.set(n.kbPath, fresh.notion_mirror_url)
+    if (fresh.kb_notion_mirror_url) urlByKbPath.set(n.kbPath, fresh.kb_notion_mirror_url)
   }
   const outcomes: NoteOutcome[] = []
   for (const n of notes) {
@@ -108,13 +108,24 @@ export const pass1 = async (cfg: Config, subtree: string, parent: NotionParent, 
   return outcomes
 }
 
-/** Pass 2: `mode: "replace"` everything that IS mirrored, refreshing body + linkMap. */
-export const pass2 = async (cfg: Config, subtree: string, parent: NotionParent, s: OrchestratorSettings, notes: Note[], dryRun: boolean): Promise<NoteOutcome[]> => {
-  const linkMap = buildLinkMap(notes)
+/**
+ * Pass 2: `mode: "replace"` everything that IS mirrored, refreshing body + linkMap.
+ * `linkMap` defaults to one built from `notes`; pass an explicit map to resolve
+ * wikilinks across a wider set (e.g. every root's notes in a multi-root run).
+ */
+export const pass2 = async (
+  cfg: Config,
+  subtree: string,
+  parent: NotionParent,
+  s: OrchestratorSettings,
+  notes: Note[],
+  dryRun: boolean,
+  linkMap: Record<string, string> = buildLinkMap(notes)
+): Promise<NoteOutcome[]> => {
   const urlByKbPath = new Map<string, string>()
   for (const n of notes) {
     const fresh = readFrontmatter(readFileSync(n.fullPath, 'utf-8'))
-    if (fresh.notion_mirror_url) urlByKbPath.set(n.kbPath, fresh.notion_mirror_url)
+    if (fresh.kb_notion_mirror_url) urlByKbPath.set(n.kbPath, fresh.kb_notion_mirror_url)
   }
   const outcomes: NoteOutcome[] = []
   for (const n of notes) {
@@ -209,3 +220,52 @@ export const publishOne = async (cfg: Config, subtree: string, parent: NotionPar
 
 /** Unpublish one note (archive its Notion page + clear mirror frontmatter). Returns the UnpublishResult. */
 export const unpublishOne = (cfg: Config, kbPath: string, dryRun: boolean): Promise<UnpublishResult> => unpublishNote(cfg, kbPath, dryRun)
+
+// ── Multi-root operations ──────────────────────────────────────────────────
+// The roots to mirror are declared in the KB itself (`kb_notion_mirror_root`
+// frontmatter) rather than passed per call. These walk every declared root and,
+// crucially for publish, render pass 2 with ONE link map spanning all roots so
+// that cross-root `[[wikilinks]]` resolve to Notion @mentions.
+
+export interface RootOutcome {
+  subtree: string
+  parent: NotionParent
+  eligible: number
+  pass1: NoteOutcome[]
+  pass2: NoteOutcome[]
+}
+
+/** Per-root publish over every root declared via `kb_notion_mirror_root`. */
+export const publishAllRoots = async (cfg: Config, s: OrchestratorSettings, opts: PublishAllOptions = {}): Promise<{ roots: RootOutcome[] }> => {
+  const kbRoot = cfg.kbRoot
+  if (!kbRoot) throw new Error('MCP_KB_NOTION_MIRROR_KB_ROOT must be set to publish — the orchestrator needs a root to walk.')
+  const dryRun = opts.dryRun ?? false
+  // Discover every root's notes up front so the link map can span all roots.
+  const perRoot = discoverRoots(kbRoot, s).map((root) => ({
+    root,
+    notes: publishOrder(kbRoot, root.subtree, s, discover(kbRoot, root.subtree, s)),
+    pass1: [] as NoteOutcome[],
+    pass2: [] as NoteOutcome[]
+  }))
+  // Pass 1 across every root first, so all pages exist before any link rendering.
+  if (!opts.onlyPass2) {
+    for (const p of perRoot) p.pass1 = await pass1(cfg, p.root.subtree, p.root.parent, s, p.notes, dryRun)
+  }
+  // One link map across ALL roots' notes → cross-root wikilinks resolve.
+  const linkMap = buildLinkMap(perRoot.flatMap((p) => p.notes))
+  if (!opts.onlyPass1) {
+    for (const p of perRoot) p.pass2 = await pass2(cfg, p.root.subtree, p.root.parent, s, p.notes, dryRun, linkMap)
+  }
+  return { roots: perRoot.map((p) => ({ subtree: p.root.subtree, parent: p.root.parent, eligible: p.notes.length, pass1: p.pass1, pass2: p.pass2 })) }
+}
+
+/** Status for every declared root, each entry shaped like `status()` plus its subtree. */
+export const statusAllRoots = (kbRoot: string, s: OrchestratorSettings): (ReturnType<typeof status> & { subtree: string })[] =>
+  discoverRoots(kbRoot, s).map((r) => ({ subtree: r.subtree, ...status(kbRoot, r.subtree, s) }))
+
+/** Preflight for every declared root, each entry shaped like `preflight()` plus its subtree. */
+export const preflightAllRoots = (kbRoot: string, s: OrchestratorSettings): (ReturnType<typeof preflight> & { subtree: string })[] =>
+  discoverRoots(kbRoot, s).map((r) => ({ subtree: r.subtree, ...preflight(kbRoot, r.subtree, s) }))
+
+/** List the declared roots (for display / dry inspection) without touching Notion. */
+export const listRoots = (kbRoot: string, s: OrchestratorSettings): MirrorRoot[] => discoverRoots(kbRoot, s)

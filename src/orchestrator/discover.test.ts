@@ -9,7 +9,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { NotionParent } from '../main/notion-client/index.js'
-import { buildLinkMap, discover, iconFor, indexKbPathFor, publishOrder, readFrontmatter, resolveParent } from './discover.js'
+import { buildLinkMap, discover, discoverRoots, iconFor, indexKbPathFor, publishOrder, readFrontmatter, resolveParent } from './discover.js'
 import type { OrchestratorSettings } from './settings.js'
 
 const PAGE_ID = '3709f7187cc281dd9a32c190c3eaf8b6'
@@ -112,6 +112,65 @@ describe('orchestrator FS layer', () => {
       const found = discover(kbRoot, SUBTREE, s).map((n) => n.kbPath)
       expect(found).toEqual(['Pillars/Engineering/Engineering.md'])
     })
+
+    it('drops a single note flagged kb_notion_mirror_exclude', async () => {
+      await write('Pillars/Engineering/Engineering.md', fm({}))
+      await write('Pillars/Engineering/Secret.md', fm({ kb_notion_mirror_exclude: 'true' }))
+      const found = discover(kbRoot, SUBTREE, s)
+        .map((n) => n.kbPath)
+        .sort()
+      expect(found).toEqual(['Pillars/Engineering/Engineering.md'])
+    })
+
+    it('prunes the whole subtree when kb_notion_mirror_exclude is on a folder index', async () => {
+      await write('Pillars/Engineering/Engineering.md', fm({}))
+      await write('Pillars/Engineering/Private/Private.md', fm({ kb_notion_mirror_exclude: 'true' }))
+      await write('Pillars/Engineering/Private/Deep/Deep.md', fm({}))
+      await write('Pillars/Engineering/Private/Deep/Leaf.md', fm({}))
+      // A sibling folder sharing a name prefix must NOT be pruned.
+      await write('Pillars/Engineering/PrivateNotes/PrivateNotes.md', fm({}))
+      const found = discover(kbRoot, SUBTREE, s)
+        .map((n) => n.kbPath)
+        .sort()
+      expect(found).toEqual(['Pillars/Engineering/Engineering.md', 'Pillars/Engineering/PrivateNotes/PrivateNotes.md'])
+    })
+  })
+
+  describe('discoverRoots', () => {
+    it('finds every kb_notion_mirror_root index across the KB, sorted by subtree, with a database parent for a bare id', async () => {
+      await write('Pillars/Engineering/Engineering.md', fm({ kb_notion_mirror_root: DB_ID }))
+      await write('Pillars/Product/Product.md', fm({ kb_notion_mirror_root: DB_ID }))
+      // Not a root → must be excluded from the mirror entirely.
+      await write('Pillars/Success/Success.md', fm({ icon: 'trophy' }))
+      await write('Pillars/Success/ESA/ESA.md', fm({}))
+      const roots = discoverRoots(kbRoot, s)
+      expect(roots.map((r) => r.subtree)).toEqual(['Pillars/Engineering', 'Pillars/Product'])
+      expect(roots[0]?.parent).toEqual({ type: 'database_id', database_id: DB_ID })
+      expect(roots[0]?.indexKbPath).toBe('Pillars/Engineering/Engineering.md')
+    })
+
+    it('supports a page:<id> value for nesting a root under a Notion page', async () => {
+      await write('Pillars/Engineering/Engineering.md', fm({ kb_notion_mirror_root: `page:${PAGE_ID}` }))
+      const [root] = discoverRoots(kbRoot, s)
+      expect(root?.parent).toEqual({ type: 'page_id', page_id: PAGE_ID })
+    })
+
+    it('ignores false / absent values', async () => {
+      await write('Pillars/Engineering/Engineering.md', fm({ kb_notion_mirror_root: 'false' }))
+      await write('Pillars/Product/Product.md', fm({ icon: 'box' }))
+      expect(discoverRoots(kbRoot, s)).toEqual([])
+    })
+
+    it('throws when kb_notion_mirror_root is on a non-index note', async () => {
+      await write('Pillars/Engineering/Engineering.md', fm({}))
+      await write('Pillars/Engineering/Leaf.md', fm({ kb_notion_mirror_root: DB_ID }))
+      expect(() => discoverRoots(kbRoot, s)).toThrow(/folder index/)
+    })
+
+    it('throws when the value is "true" rather than a parent id', async () => {
+      await write('Pillars/Engineering/Engineering.md', fm({ kb_notion_mirror_root: 'true' }))
+      expect(() => discoverRoots(kbRoot, s)).toThrow(/Notion parent id/)
+    })
   })
 
   describe('publishOrder', () => {
@@ -194,7 +253,7 @@ describe('orchestrator FS layer', () => {
 
   describe('buildLinkMap', () => {
     it('aliases each published note by basename and by full kbPath without .md', async () => {
-      await write('Pillars/Engineering/Engineering.md', fm({ notion_mirror_url: ENG_URL }))
+      await write('Pillars/Engineering/Engineering.md', fm({ kb_notion_mirror_url: ENG_URL }))
       await write('Pillars/Engineering/Bioweave/Bioweave.md', fm({})) // unpublished — should be skipped
       const notes = discover(kbRoot, SUBTREE, s)
       expect(buildLinkMap(notes)).toEqual({

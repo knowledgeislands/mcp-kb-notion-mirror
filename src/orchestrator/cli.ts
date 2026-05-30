@@ -8,13 +8,16 @@
  * printing happens here, from the structured values the api functions return —
  * api.ts itself never writes to stdout/stderr.
  *
- * Layout-agnostic: every mutating command takes `--subtree <kbPath>` (the folder
- * to walk) and one of `--parent-db <id>` / `--parent-page <id>` (the Notion
- * parent the subtree-root index attaches under). Neither is read from env.
+ * Two modes:
+ *  • Flagless (recommended) — with NO `--subtree`, every command operates on the
+ *    roots declared in the KB via `kb_notion_mirror_root` frontmatter. Publish
+ *    renders one link map spanning all roots so cross-root wikilinks resolve.
+ *  • Explicit subtree — pass `--subtree <kbPath>` plus `--parent-db <id>` /
+ *    `--parent-page <id>` to walk a single subtree under an explicit parent.
  */
 import { loadConfig } from '../config/index.js'
 import type { NotionParent } from '../main/notion-client/index.js'
-import { preflight, publishAll, publishOne, status, unpublishOne } from './api.js'
+import { preflight, preflightAllRoots, publishAll, publishAllRoots, publishOne, status, statusAllRoots, unpublishOne } from './api.js'
 import { loadOrchestratorSettings } from './settings.js'
 
 const tryLoadEnvFile = (path: string): void => {
@@ -27,14 +30,19 @@ const tryLoadEnvFile = (path: string): void => {
 tryLoadEnvFile('.env.local')
 tryLoadEnvFile('.env')
 
-const USAGE = `Usage:
+const USAGE = `Usage (flagless — all roots declared via kb_notion_mirror_root frontmatter):
+  mcp-kb-notion-mirror-publish status
+  mcp-kb-notion-mirror-publish preflight
+  mcp-kb-notion-mirror-publish publish   [--pass1|--pass2] [--dry-run]
+
+Usage (explicit single subtree):
   mcp-kb-notion-mirror-publish status    --subtree <kbPath>
   mcp-kb-notion-mirror-publish preflight --subtree <kbPath>
   mcp-kb-notion-mirror-publish publish   --subtree <kbPath> (--parent-db <id> | --parent-page <id>) [<kbPath>] [--pass1|--pass2] [--dry-run]
   mcp-kb-notion-mirror-publish unpublish <kbPath> [--dry-run]
 
 Flags:
-  --subtree <kbPath>     kb-relative folder to walk (required for status/preflight/publish)
+  --subtree <kbPath>     kb-relative folder to walk; omit to use all declared roots
   --parent-db <id>       publish under this Notion wiki database (subtree-root parent)
   --parent-page <id>     publish under this Notion page (subtree-root parent)
   --dry-run              compute outcomes without calling Notion or editing notes
@@ -94,17 +102,23 @@ const main = async (): Promise<void> => {
       console.error('MCP_KB_NOTION_MIRROR_KB_ROOT is required.')
       process.exit(1)
     }
-    if (!subtree) {
-      console.error(`${cmd} requires --subtree <kbPath>`)
-      process.exit(2)
-    }
     const settings = loadOrchestratorSettings(process.env)
+    // Subtrees to report on: the explicit one, or every declared root.
+    const subtrees = subtree ? [subtree] : statusAllRoots(kbRoot, settings).map((r) => r.subtree)
     if (cmd === 'status') {
-      const s = status(kbRoot, subtree, settings)
-      for (const n of s.notes) console.log(`${n.published ? '✓' : '·'} ${n.kbPath}`)
-      console.log(`\nTotal: ${s.total}   Published: ${s.published}   Pending: ${s.pending}`)
+      if (!subtree && subtrees.length === 0) console.log('No mirror roots declared (kb_notion_mirror_root).')
+      let total = 0
+      let published = 0
+      for (const st of subtrees) {
+        const s = status(kbRoot, st, settings)
+        console.log(`\n--- ${st} ---`)
+        for (const n of s.notes) console.log(`${n.published ? '✓' : '·'} ${n.kbPath}`)
+        total += s.total
+        published += s.published
+      }
+      console.log(`\nTotal: ${total}   Published: ${published}   Pending: ${total - published}`)
     } else {
-      const { issues } = preflight(kbRoot, subtree, settings)
+      const issues = subtree ? preflight(kbRoot, subtree, settings).issues : preflightAllRoots(kbRoot, settings).flatMap((r) => r.issues)
       if (issues.length === 0) {
         console.log('Preflight: no structural issues.')
       } else {
@@ -123,8 +137,17 @@ const main = async (): Promise<void> => {
 
   if (cmd === 'publish') {
     if (!subtree) {
-      console.error('publish requires --subtree <kbPath>')
-      process.exit(2)
+      // Flagless: publish every root declared via kb_notion_mirror_root, with a
+      // single link map across all roots (handled in publishAllRoots).
+      const { roots } = await publishAllRoots(cfg, settings, { dryRun, onlyPass1, onlyPass2 })
+      if (roots.length === 0) console.log('No mirror roots declared (kb_notion_mirror_root). Nothing to publish.')
+      for (const r of roots) {
+        const parentDesc = r.parent.type === 'database_id' ? `db ${r.parent.database_id}` : `page ${r.parent.page_id}`
+        console.log(`\n########## ${r.subtree}  (→ ${parentDesc}, ${r.eligible} note(s)) ##########`)
+        printOutcomes('Pass 1 (create)', r.pass1)
+        printOutcomes('Pass 2 (replace)', r.pass2)
+      }
+      return
     }
     const parent = parentFromFlags(argv)
     if (positional.length > 1) {

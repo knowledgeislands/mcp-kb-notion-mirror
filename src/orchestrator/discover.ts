@@ -37,7 +37,7 @@ export interface Note {
 /**
  * Read top-level scalar `key: value` lines from a YAML frontmatter block. Lists,
  * nested maps, and blank lines are ignored — the orchestrator only needs simple
- * fields (`icon`, `mirror`, `notion_mirror_url`, etc.).
+ * fields (`icon`, `mirror`, `kb_notion_mirror_url`, etc.).
  */
 export const readFrontmatter = (content: string): Record<string, string> => {
   if (!content.startsWith('---\n')) return {}
@@ -55,6 +55,7 @@ export const readFrontmatter = (content: string): Record<string, string> => {
 
 const walkMd = function* (dir: string): Generator<string> {
   for (const name of readdirSync(dir)) {
+    if (name.startsWith('.')) continue // skip .git, .obsidian, .DS_Store, …
     const full = join(dir, name)
     const st = statSync(full)
     if (st.isDirectory()) yield* walkMd(full)
@@ -70,22 +71,81 @@ const loadNote = (kbRoot: string, fullPath: string): Note => {
   return { kbPath, fullPath, base, parentFolder, isIndex: base === parentFolder, fields }
 }
 
+/**
+ * Whether a note is explicitly excluded from the mirror. Honours the legacy
+ * `mirror: exclude` and the namespaced `kb_notion_mirror_exclude` (any truthy
+ * value other than `false`). When set on a folder index, `discover` additionally
+ * prunes the whole subtree — see below.
+ */
+const isExcluded = (n: Note): boolean => {
+  if (n.fields.mirror === 'exclude') return true
+  const v = n.fields.kb_notion_mirror_exclude
+  return v !== undefined && v !== '' && v !== 'false'
+}
+
 const isEligible = (n: Note, s: OrchestratorSettings): boolean => {
-  if (n.fields.mirror === 'exclude') return false
+  if (isExcluded(n)) return false
   if (s.skipKbPaths.has(n.kbPath)) return false
   if (s.skipPrefixes.some((p) => n.base.startsWith(p))) return false
   return true
 }
 
-/** Walk `<kbRoot>/<subtree>/` and return every mirror-eligible note. */
+/** A folder declared as a mirror root via `kb_notion_mirror_root` frontmatter. */
+export interface MirrorRoot {
+  /** kb-relative folder to walk, e.g. "Pillars/Engineering". */
+  subtree: string
+  /** kb-path of the root's index note, e.g. "Pillars/Engineering/Engineering.md". */
+  indexKbPath: string
+  /** The Notion parent the root index attaches under. */
+  parent: NotionParent
+}
+
+/**
+ * Parse a `kb_notion_mirror_root` value into a Notion parent. A bare id (or
+ * `db:<id>`) is a wiki database parent; `page:<id>` nests the root under a page.
+ */
+const parseRootParent = (value: string): NotionParent => {
+  const v = value.trim()
+  if (v.startsWith('page:')) return { type: 'page_id', page_id: v.slice('page:'.length).trim() }
+  return { type: 'database_id', database_id: v.replace(/^db:/, '').trim() }
+}
+
+/**
+ * Scan the whole KB for folders that declare themselves a mirror root via
+ * `kb_notion_mirror_root: <parent>` on their index note. The value is the Notion
+ * parent the root attaches under (a wiki database id by default, or `page:<id>`
+ * to nest under a page). A subtree is mirrored iff its index is a root; anything
+ * not under a declared root is never walked — so excluding an area from the
+ * mirror is simply a matter of not marking it a root.
+ */
+export const discoverRoots = (kbRoot: string, s: OrchestratorSettings): MirrorRoot[] => {
+  const roots: MirrorRoot[] = []
+  for (const full of walkMd(kbRoot)) {
+    const n = loadNote(kbRoot, full)
+    const value = n.fields.kb_notion_mirror_root
+    if (!value || value === 'false') continue
+    if (!isEligible(n, s)) continue
+    if (!n.isIndex) throw new Error(`kb_notion_mirror_root must be set on a folder index (note name == folder name), not ${n.kbPath}`)
+    if (value === 'true') throw new Error(`kb_notion_mirror_root on ${n.kbPath} must be the Notion parent id (a wiki database id), not "true"`)
+    roots.push({ subtree: dirname(n.kbPath), indexKbPath: n.kbPath, parent: parseRootParent(value) })
+  }
+  return roots.sort((a, b) => a.subtree.localeCompare(b.subtree))
+}
+
+/**
+ * Walk `<kbRoot>/<subtree>/` and return every mirror-eligible note. A note
+ * carrying an exclude flag is dropped; when the flag is on a folder index the
+ * entire subtree under that folder is pruned, so excluding a folder never
+ * orphans its children.
+ */
 export const discover = (kbRoot: string, subtree: string, s: OrchestratorSettings): Note[] => {
   const rootPath = join(kbRoot, subtree)
-  const out: Note[] = []
-  for (const full of walkMd(rootPath)) {
-    const n = loadNote(kbRoot, full)
-    if (isEligible(n, s)) out.push(n)
-  }
-  return out
+  const all: Note[] = []
+  for (const full of walkMd(rootPath)) all.push(loadNote(kbRoot, full))
+  // Folders whose index note is excluded → prune the whole subtree under them.
+  const excludedFolders = all.filter((n) => n.isIndex && isExcluded(n)).map((n) => `${dirname(n.kbPath)}/`)
+  const underExcludedFolder = (kbPath: string): boolean => excludedFolders.some((prefix) => kbPath.startsWith(prefix))
+  return all.filter((n) => isEligible(n, s) && !underExcludedFolder(n.kbPath))
 }
 
 /**
@@ -151,7 +211,7 @@ const pageParentFrom = (idx: string, urlByKbPath: Map<string, string>): NotionPa
 }
 
 /**
- * Build a wikilink → URL map by re-reading each note's `notion_mirror_url` from
+ * Build a wikilink → URL map by re-reading each note's `kb_notion_mirror_url` from
  * disk. We read from disk (not from `notes[].fields`) because publish writes
  * URLs back to the file as it goes, so a fresh read gives the post-pass-1 state.
  *
@@ -162,7 +222,7 @@ export const buildLinkMap = (notes: Note[]): Record<string, string> => {
   const map: Record<string, string> = {}
   for (const n of notes) {
     const fresh = readFrontmatter(readFileSync(n.fullPath, 'utf-8'))
-    const url = fresh.notion_mirror_url
+    const url = fresh.kb_notion_mirror_url
     if (!url) continue
     map[n.base] = url
     map[n.kbPath.replace(/\.md$/, '')] = url

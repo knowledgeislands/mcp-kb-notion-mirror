@@ -14,7 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { type Config, DEFAULT_BANNER_TEMPLATE } from '../config/index.js'
 import { _clearTitlePropertyCache } from '../main/mirror/title-property.js'
 import type { NotionParent } from '../main/notion-client/index.js'
-import { pass1, pass2, preflight, publishAll, publishOne, status, unpublishOne } from './api.js'
+import { pass1, pass2, preflight, publishAll, publishAllRoots, publishOne, status, unpublishOne } from './api.js'
 import type { OrchestratorSettings } from './settings.js'
 
 const DB_ID = '36f9f7187cc280f69272e60aa89bff24'
@@ -141,7 +141,7 @@ describe('orchestrator api', () => {
 
   describe('status', () => {
     it('counts published vs pending, ordered like a publish', async () => {
-      await write('Pillars/Engineering/Engineering.md', fm({ notion_mirror_url: `https://www.notion.so/E-${'a'.repeat(32)}` }))
+      await write('Pillars/Engineering/Engineering.md', fm({ kb_notion_mirror_url: `https://www.notion.so/E-${'a'.repeat(32)}` }))
       await write('Pillars/Engineering/Leaf.md', fm({}))
       const res = status(kbRoot, SUBTREE, s)
       expect(res).toEqual({
@@ -170,7 +170,7 @@ describe('orchestrator api', () => {
       expect(res.pass1.map((o) => o.action)).toEqual(['create', 'create'])
       expect(res.pass2.map((o) => o.action)).toEqual(['replace', 'replace'])
       // URLs were written back to disk.
-      expect(await read('Pillars/Engineering/Engineering.md')).toMatch(/notion_mirror_url:/)
+      expect(await read('Pillars/Engineering/Engineering.md')).toMatch(/kb_notion_mirror_url:/)
     })
 
     it('dry-run plans without calling Notion', async () => {
@@ -192,7 +192,7 @@ describe('orchestrator api', () => {
     })
 
     it('onlyPass2 runs just the replace pass', async () => {
-      await write('Pillars/Engineering/Engineering.md', fm({ notion_mirror_url: `https://www.notion.so/E-${'a'.repeat(32)}` }))
+      await write('Pillars/Engineering/Engineering.md', fm({ kb_notion_mirror_url: `https://www.notion.so/E-${'a'.repeat(32)}` }))
       routeHappy()
       const res = await publishAll(cfg, SUBTREE, ROOT_PARENT, s, { onlyPass2: true })
       expect(res.pass1).toEqual([])
@@ -200,7 +200,7 @@ describe('orchestrator api', () => {
     })
 
     it('skips an already-mirrored note in pass 1', async () => {
-      await write('Pillars/Engineering/Engineering.md', fm({ notion_mirror_url: `https://www.notion.so/E-${'a'.repeat(32)}` }))
+      await write('Pillars/Engineering/Engineering.md', fm({ kb_notion_mirror_url: `https://www.notion.so/E-${'a'.repeat(32)}` }))
       routeHappy()
       const res = await publishAll(cfg, SUBTREE, ROOT_PARENT, s, { onlyPass1: true })
       expect(res.pass1[0]?.action).toBe('skip')
@@ -211,7 +211,7 @@ describe('orchestrator api', () => {
       // (the early skip ignores the placeholder) and instead calls publishNote,
       // which sees the real frontmatter URL and returns { skipped }.
       const PLACEHOLDER = 'https://www.notion.so/PLANNED-00000000000000000000000000000000'
-      await write('Pillars/Engineering/Engineering.md', fm({ notion_mirror_url: PLACEHOLDER }))
+      await write('Pillars/Engineering/Engineering.md', fm({ kb_notion_mirror_url: PLACEHOLDER }))
       routeHappy()
       const note = { kbPath: 'Pillars/Engineering/Engineering.md', fullPath: path.join(kbRoot, SUBTREE, 'Engineering.md'), base: 'Engineering', parentFolder: 'Engineering', isIndex: true, fields: {} }
       const res = await pass1(cfg, SUBTREE, ROOT_PARENT, s, [note], false)
@@ -244,7 +244,7 @@ describe('orchestrator api', () => {
 
   describe('pass2 error handling', () => {
     it('records an error and keeps going when a replace throws', async () => {
-      await write('Pillars/Engineering/Engineering.md', fm({ notion_mirror_url: 'https://www.notion.so/no-id-here' }))
+      await write('Pillars/Engineering/Engineering.md', fm({ kb_notion_mirror_url: 'https://www.notion.so/no-id-here' }))
       routeHappy()
       const res = await publishAll(cfg, SUBTREE, ROOT_PARENT, s, { onlyPass2: true })
       expect(res.pass2[0]).toMatchObject({ action: 'error' })
@@ -253,7 +253,7 @@ describe('orchestrator api', () => {
 
     it('records an error when the parent index is unresolvable in pass 2', async () => {
       const leafNote = { kbPath: 'Pillars/Engineering/Sub/Leaf.md', fullPath: path.join(kbRoot, 'Pillars/Engineering/Sub/Leaf.md'), base: 'Leaf', parentFolder: 'Sub', isIndex: false, fields: {} }
-      await write('Pillars/Engineering/Sub/Leaf.md', fm({ notion_mirror_url: `https://www.notion.so/L-${'a'.repeat(32)}` }))
+      await write('Pillars/Engineering/Sub/Leaf.md', fm({ kb_notion_mirror_url: `https://www.notion.so/L-${'a'.repeat(32)}` }))
       routeHappy()
       const res = await pass2(cfg, SUBTREE, ROOT_PARENT, s, [leafNote], false)
       expect(res[0]).toMatchObject({ action: 'error' })
@@ -262,7 +262,7 @@ describe('orchestrator api', () => {
 
     it('plans (no Notion call) for an already-published note in dry-run', async () => {
       const url = `https://www.notion.so/E-${'a'.repeat(32)}`
-      await write('Pillars/Engineering/Engineering.md', fm({ notion_mirror_url: url }))
+      await write('Pillars/Engineering/Engineering.md', fm({ kb_notion_mirror_url: url }))
       const res = await publishAll(cfg, SUBTREE, ROOT_PARENT, s, { onlyPass2: true, dryRun: true })
       expect(res.pass2[0]).toMatchObject({ action: 'plan', url })
       expect(fetchMock).not.toHaveBeenCalled()
@@ -273,6 +273,52 @@ describe('orchestrator api', () => {
       await write('Pillars/Engineering/Engineering.md', fm({}))
       const res = await pass2(cfg, SUBTREE, ROOT_PARENT, s, [note], false)
       expect(res[0]).toMatchObject({ action: 'skip', error: 'not yet published — run pass 1' })
+    })
+  })
+
+  describe('publishAllRoots', () => {
+    it('discovers every kb_notion_mirror_root, publishes each, and skips areas not under a root', async () => {
+      await write('Pillars/Engineering/Engineering.md', fm({ kb_notion_mirror_root: DB_ID }))
+      await write('Pillars/Product/Product.md', fm({ kb_notion_mirror_root: DB_ID }))
+      // Not under any root → never published.
+      await write('Pillars/Success/Success.md', fm({ icon: 'trophy' }))
+      routeHappy()
+      const { roots } = await publishAllRoots(cfg, s)
+      expect(roots.map((r) => r.subtree)).toEqual(['Pillars/Engineering', 'Pillars/Product'])
+      expect(roots.every((r) => r.pass1.every((o) => o.action === 'create'))).toBe(true)
+      expect(roots.every((r) => r.pass2.every((o) => o.action === 'replace'))).toBe(true)
+      expect(await read('Pillars/Engineering/Engineering.md')).toMatch(/kb_notion_mirror_url:/)
+      expect(await read('Pillars/Product/Product.md')).toMatch(/kb_notion_mirror_url:/)
+    })
+
+    it('resolves a CROSS-ROOT wikilink to a Notion mention via the combined link map', async () => {
+      // Engineering's leaf links to Product, which lives under a DIFFERENT root.
+      // Engineering(idx)=hex1, Engineering/Leaf=hex2, Product(idx)=hex3.
+      await write('Pillars/Engineering/Engineering.md', fm({ kb_notion_mirror_root: DB_ID }))
+      await write('Pillars/Engineering/Leaf.md', `${fm({})}\nSee [[Product]] for value.\n`)
+      await write('Pillars/Product/Product.md', fm({ kb_notion_mirror_root: DB_ID }))
+      routeHappy()
+      await publishAllRoots(cfg, s)
+      // The Product page id (hex3) must appear in some request body as a mention —
+      // only possible if pass 2's link map spanned both roots.
+      const bodies = fetchMock.mock.calls.map((c) => (c[1] as { body?: string } | undefined)?.body ?? '').join('\n')
+      const productId = (3).toString(16).padStart(32, '0') // hex id baked into Product's mirror URL
+      expect(bodies).toContain('"mention"')
+      expect(bodies).toContain(productId)
+    })
+
+    it('honours onlyPass1 across all roots', async () => {
+      await write('Pillars/Engineering/Engineering.md', fm({ kb_notion_mirror_root: DB_ID }))
+      await write('Pillars/Product/Product.md', fm({ kb_notion_mirror_root: DB_ID }))
+      routeHappy()
+      const { roots } = await publishAllRoots(cfg, s, { onlyPass1: true })
+      expect(roots.every((r) => r.pass2.length === 0)).toBe(true)
+      expect(roots.every((r) => r.pass1.length === 1)).toBe(true)
+    })
+
+    it('returns no roots when none are declared', async () => {
+      await write('Pillars/Engineering/Engineering.md', fm({}))
+      expect(await publishAllRoots(cfg, s)).toEqual({ roots: [] })
     })
   })
 
@@ -325,18 +371,18 @@ describe('orchestrator api', () => {
 
   describe('unpublishOne', () => {
     it('returns a dry-run result without calling Notion', async () => {
-      await write('Pillars/Engineering/Engineering.md', fm({ notion_mirror_url: `https://www.notion.so/E-${'a'.repeat(32)}` }))
+      await write('Pillars/Engineering/Engineering.md', fm({ kb_notion_mirror_url: `https://www.notion.so/E-${'a'.repeat(32)}` }))
       const res = await unpublishOne(cfg, 'Pillars/Engineering/Engineering.md', true)
       expect(res).toMatchObject({ dry_run: true })
       expect(fetchMock).not.toHaveBeenCalled()
     })
 
     it('archives and clears frontmatter when dry_run is false', async () => {
-      await write('Pillars/Engineering/Engineering.md', fm({ notion_mirror_url: `https://www.notion.so/E-${'a'.repeat(32)}` }))
+      await write('Pillars/Engineering/Engineering.md', fm({ kb_notion_mirror_url: `https://www.notion.so/E-${'a'.repeat(32)}` }))
       routeHappy()
       const res = await unpublishOne(cfg, 'Pillars/Engineering/Engineering.md', false)
       expect(res).toMatchObject({ archived: true })
-      expect(await read('Pillars/Engineering/Engineering.md')).not.toMatch(/notion_mirror_url:/)
+      expect(await read('Pillars/Engineering/Engineering.md')).not.toMatch(/kb_notion_mirror_url:/)
     })
 
     it('reports not-published for a note with no mirror URL', async () => {

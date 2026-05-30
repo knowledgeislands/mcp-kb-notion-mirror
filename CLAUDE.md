@@ -83,7 +83,7 @@ This server holds a Notion token, reads user-supplied paths, and writes back to 
 
 1. **The token never leaves the process unredacted.** Read in [src/config/index.ts](./src/config/index.ts), attached as the Bearer header in [src/main/notion-client/index.ts](./src/main/notion-client/index.ts) only. `NotionApiError` carries status/code/body — never the token.
 2. **Every `kb_path` and `subtree` runs through [src/utils/paths.ts](./src/utils/paths.ts) before any `fs.*` call.** `resolveKbNotePath(cfg.kbRoot, p)` — lexical (`..` rejected; confined under `kbRoot` when set) plus realpath of the deepest existing ancestor (catches symlink escapes). The tree tools confine BOTH `subtree` and `kb_path` under `cfg.kbRoot` before walking. Schemas also reject `..` at the zod layer.
-3. **Notion ids are validated before substitution into an API path** via `normalizeId()`. `extractPageIdFromUrl()` pulls the id out of `notion_mirror_url`; a malformed URL errors before any call.
+3. **Notion ids are validated before substitution into an API path** via `normalizeId()`. `extractPageIdFromUrl()` pulls the id out of `kb_notion_mirror_url`; a malformed URL errors before any call.
 4. **Destructive tools default to `dry_run: true`.** `notion_mirror_unpublish` and `notion_mirror_tree_publish` only mutate when `dry_run` is explicitly `false`. The `destructive` access level is opt-in.
 5. **Frontmatter write-backs are atomic** via `atomicWriteFile()`.
 6. **Zod schemas are `.strict()` with bounded sizes.** `kb_path` / `subtree` cap at 4096 chars; `parent` ids are regex-validated (32-hex or dashed UUID) via the shared `parentArg` in [src/utils/notion-args.ts](./src/utils/notion-args.ts).

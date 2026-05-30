@@ -78,7 +78,7 @@ Args:
   - link_map (object, optional): { "[[target]] text": "mirror url" }. Resolved wikilinks become Notion @mentions; unresolved ones render italic. Omit/empty → all italic.
 
 Returns:
-  - On publish/replace/force: { url, page_id, published_at, mode }. For replace, url equals the pre-existing notion_mirror_url.
+  - On publish/replace/force: { url, page_id, published_at, mode }. For replace, url equals the pre-existing kb_notion_mirror_url.
   - On skip (already mirrored, mode "create"): { skipped: true, existing_url }.
 
 Side effect: when parent.type is "page_id", the parent's "Child Pages" heading is refreshed (mirror-only; never written to the KB).
@@ -108,7 +108,7 @@ Errors:
 Caveat: Notion cannot move a page between a page_id parent and a database_id parent — PATCH /v1/pages silently ignores it. This tool detects that case and errors clearly; use unpublish + publish instead. (Tested 2026-05-30 against API version 2022-06-28.)
 
 Args:
-  - kb_path (string, required): the KB markdown note (must already have notion_mirror_url).
+  - kb_path (string, required): the KB markdown note (must already have kb_notion_mirror_url).
   - parent (object, required): the new Notion parent, same shape as publish.
 
 Returns:
@@ -133,7 +133,7 @@ Errors:
     'notion_mirror_unpublish',
     {
       title: 'Archive a KB note Notion mirror page',
-      description: `Archive the Notion page referenced by a note's notion_mirror_url and clear the two mirror frontmatter fields. Destructive — defaults to a dry run.
+      description: `Archive the Notion page referenced by a note's kb_notion_mirror_url and clear the two mirror frontmatter fields. Destructive — defaults to a dry run.
 
 Caveat: archiving cascade-archives descendant pages on the Notion side. This tool only clears the one note's frontmatter; descendants' frontmatter still points at now-archived pages (caller's responsibility).
 
@@ -147,7 +147,7 @@ Returns:
   - note not mirrored: { archived: false, reason: "not-published" }.
 
 Errors:
-  - "Could not extract a 32-hex page id …" — the notion_mirror_url is malformed.`,
+  - "Could not extract a 32-hex page id …" — the kb_notion_mirror_url is malformed.`,
       inputSchema: unpublishInput,
       annotations: DESTRUCTIVE_REMOTE
     },
@@ -164,7 +164,7 @@ Errors:
     'notion_mirror_get',
     {
       title: 'Fetch the live Notion state of a note mirror page',
-      description: `Fetch the live Notion page referenced by a note's notion_mirror_url. Pure read — no Notion mutation, no file change.
+      description: `Fetch the live Notion page referenced by a note's kb_notion_mirror_url. Pure read — no Notion mutation, no file change.
 
 Args:
   - kb_path (string, required): path to the KB markdown note.
@@ -174,7 +174,7 @@ Returns:
   - note not mirrored: { exists: false, reason: "not-published" }.
 
 Errors:
-  - "Could not extract a 32-hex page id …" — the notion_mirror_url is malformed.
+  - "Could not extract a 32-hex page id …" — the kb_notion_mirror_url is malformed.
   - "Notion GET /v1/pages/{id} → HTTP 404" — the page was deleted in Notion.`,
       inputSchema: getInput,
       annotations: READ_ONLY_REMOTE

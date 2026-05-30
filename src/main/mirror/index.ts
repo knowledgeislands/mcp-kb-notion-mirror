@@ -6,7 +6,7 @@
  * branch unit-testable against a real temp file + a mocked Notion `fetch`.
  *
  * The MCP is file-aware but layout-agnostic: it reads the note's frontmatter +
- * body and writes back ONLY `notion_mirror_url` / `notion_mirror_published_at`.
+ * body and writes back ONLY `kb_notion_mirror_url` / `kb_notion_mirror_published_at`.
  * It does not discover files, resolve parents, or know any folder convention —
  * the caller supplies `kb_path` and (for mutations) the Notion `parent`.
  */
@@ -35,7 +35,7 @@ import { bodyToBlocks, stripFrontmatter, stripLeadingH1, titleFromPath } from '.
 import { getDatabaseTitleProperty } from './title-property.js'
 import { convertMentionPlaceholders, rewriteWikilinks } from './wikilinks.js'
 
-export const MIRROR_FIELDS = ['notion_mirror_url', 'notion_mirror_published_at'] as const
+export const MIRROR_FIELDS = ['kb_notion_mirror_url', 'kb_notion_mirror_published_at'] as const
 const MAX_CHILDREN_PER_REQUEST = 100
 
 /** Publish modes. `create` skips if mirrored; `replace` updates in place (URL preserved); `force` archives + recreates (URL changes). */
@@ -126,7 +126,7 @@ export const publishNote = async (cfg: Config, kbPath: string, parent: NotionPar
   const { abs, raw, fields, hasFrontmatter } = await readNote(cfg, kbPath)
   if (!hasFrontmatter) throw new Error('Note has no YAML frontmatter; refusing to publish.')
 
-  const existing = fields.notion_mirror_url
+  const existing = fields.kb_notion_mirror_url
   if (existing && mode === 'create') return { skipped: true, existing_url: existing }
 
   const title = titleFromPath(abs)
@@ -143,7 +143,7 @@ export const publishNote = async (cfg: Config, kbPath: string, parent: NotionPar
   // In-place update: keep the URL, refresh body + properties.
   if (existing && mode === 'replace') {
     const pageId = extractPageIdFromUrl(existing)
-    if (!pageId) throw new Error(`Could not extract a 32-hex page id from notion_mirror_url: ${existing}`)
+    if (!pageId) throw new Error(`Could not extract a 32-hex page id from kb_notion_mirror_url: ${existing}`)
     // Read parent before updatePage so we can detect the page_id ↔ database_id
     // silent-failure case Notion exhibits on cross-type re-parents.
     const before = await getPage(cfg, pageId)
@@ -158,7 +158,7 @@ export const publishNote = async (cfg: Config, kbPath: string, parent: NotionPar
     }
     await replaceBody(cfg, pageId, children)
     const publishedAt = normalizePublishedAt(page.last_edited_time)
-    await atomicWriteFile(abs, upsertFrontmatterFields(raw, { notion_mirror_published_at: publishedAt }))
+    await atomicWriteFile(abs, upsertFrontmatterFields(raw, { kb_notion_mirror_published_at: publishedAt }))
     // Body replace cleared this page's footer heading; regenerate it. Refresh
     // the OLD parent's footer if we just re-parented away from a page parent,
     // and the new parent's footer if the new parent is a page.
@@ -177,7 +177,7 @@ export const publishNote = async (cfg: Config, kbPath: string, parent: NotionPar
 
   const page = await createPage(cfg, { parent, title, children, titleProperty, icon: options.icon })
   const publishedAt = normalizePublishedAt(page.created_time)
-  await atomicWriteFile(abs, upsertFrontmatterFields(raw, { notion_mirror_url: page.url, notion_mirror_published_at: publishedAt }))
+  await atomicWriteFile(abs, upsertFrontmatterFields(raw, { kb_notion_mirror_url: page.url, kb_notion_mirror_published_at: publishedAt }))
 
   // A new child page lands in its page parent; refresh that parent's footer.
   // Database parents need none — the database's views already list their rows.
@@ -189,10 +189,10 @@ export const publishNote = async (cfg: Config, kbPath: string, parent: NotionPar
 /** Archive the note's mirror page and clear the two mirror fields. Dry-run by default. */
 export const unpublishNote = async (cfg: Config, kbPath: string, dryRun: boolean): Promise<UnpublishResult> => {
   const { abs, raw, fields } = await readNote(cfg, kbPath)
-  const mirror = fields.notion_mirror_url
+  const mirror = fields.kb_notion_mirror_url
   if (!mirror) return { archived: false, reason: 'not-published' }
   const pageId = extractPageIdFromUrl(mirror)
-  if (!pageId) throw new Error(`Could not extract a 32-hex page id from notion_mirror_url: ${mirror}`)
+  if (!pageId) throw new Error(`Could not extract a 32-hex page id from kb_notion_mirror_url: ${mirror}`)
 
   if (dryRun) {
     return { dry_run: true, would_archive_url: mirror, would_archive_page_id: pageId, would_clear_fields: [...MIRROR_FIELDS] }
@@ -213,10 +213,10 @@ export const unpublishNote = async (cfg: Config, kbPath: string, dryRun: boolean
 /** Re-parent the note's mirror page to `parent`. No frontmatter change — the URL is stable. */
 export const moveNote = async (cfg: Config, kbPath: string, parent: NotionParent): Promise<MoveResult> => {
   const { fields } = await readNote(cfg, kbPath)
-  const mirror = fields.notion_mirror_url
+  const mirror = fields.kb_notion_mirror_url
   if (!mirror) throw new Error('Note is not published — cannot move.')
   const pageId = extractPageIdFromUrl(mirror)
-  if (!pageId) throw new Error(`Could not extract a 32-hex page id from notion_mirror_url: ${mirror}`)
+  if (!pageId) throw new Error(`Could not extract a 32-hex page id from kb_notion_mirror_url: ${mirror}`)
 
   const before = await getPage(cfg, pageId)
   await setPageParent(cfg, pageId, parent)
@@ -243,10 +243,10 @@ export const moveNote = async (cfg: Config, kbPath: string, parent: NotionParent
 /** Fetch the live Notion state of the note's mirror page. Pure read — no file mutation. */
 export const getNote = async (cfg: Config, kbPath: string): Promise<GetResult> => {
   const { fields } = await readNote(cfg, kbPath)
-  const mirror = fields.notion_mirror_url
+  const mirror = fields.kb_notion_mirror_url
   if (!mirror) return { exists: false, reason: 'not-published' }
   const pageId = extractPageIdFromUrl(mirror)
-  if (!pageId) throw new Error(`Could not extract a 32-hex page id from notion_mirror_url: ${mirror}`)
+  if (!pageId) throw new Error(`Could not extract a 32-hex page id from kb_notion_mirror_url: ${mirror}`)
 
   const page = await getPage(cfg, pageId)
   return {
