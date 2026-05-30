@@ -75,14 +75,6 @@ describe('footer', () => {
       expect(patch()?.body?.after).toBe(CONTENT) // anchored just before the first child page
     })
 
-    it('cleans up a legacy "📂 Child Pages" heading + mention bullets, sparing child pages after it', async () => {
-      route([[content(CONTENT), heading(SENT, '📂 Child Pages'), oldBullet(OLD_BULLET), childPage(CHILD_A)]])
-      await refreshFooter(cfg, PARENT)
-      expect(deletes()).toEqual([`https://api.notion.test/v1/blocks/${SENT}`, `https://api.notion.test/v1/blocks/${OLD_BULLET}`])
-      expect(patch()?.body?.after).toBe(CONTENT)
-      expect(patch()?.body?.children?.[0].heading_2?.rich_text[0].text.content).toBe('Child Pages')
-    })
-
     it('is idempotent: removes the current heading and re-inserts it in the same place', async () => {
       route([[content(CONTENT), heading(SENT, 'Child Pages'), childPage(CHILD_A)]])
       await refreshFooter(cfg, PARENT)

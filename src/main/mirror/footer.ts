@@ -22,8 +22,6 @@ import { appendBlockChildren, deleteBlock, getBlockChildren, type NotionBlock, t
 
 /** The sentinel heading text that marks the footer. */
 export const SENTINEL_TEXT = 'Child Pages'
-/** The pre-1.x footer heading (with a folder emoji); recognised so it gets cleaned up. */
-const LEGACY_SENTINEL_TEXT = '📂 Child Pages'
 
 /** The footer: a single "Child Pages" sentinel heading. */
 export const buildFooterBlocks = (): Record<string, unknown>[] => [{ object: 'block', type: 'heading_2', heading_2: { rich_text: [{ type: 'text', text: { content: SENTINEL_TEXT } }] } }]
@@ -36,7 +34,7 @@ const blockText = (block: NotionBlock): string => {
 const isSentinel = (block: NotionBlock): boolean => {
   if (block.type !== 'heading_2') return false
   const text = blockText(block)
-  return text === SENTINEL_TEXT || text === LEGACY_SENTINEL_TEXT
+  return text === SENTINEL_TEXT
 }
 
 const doRefresh = async (cfg: NotionConfig, parentPageId: string): Promise<void> => {
