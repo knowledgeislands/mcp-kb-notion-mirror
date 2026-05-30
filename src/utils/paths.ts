@@ -80,6 +80,20 @@ export const resolveKbNotePath = (kbPath: string): string => {
 }
 
 /**
+ * The realpath of the `Pillars` directory that contains `noteAbsPath`. When
+ * KB_ROOT is set it's `<KB_ROOT>/Pillars`; otherwise it's derived from the note
+ * path by locating its `Pillars` ancestor segment. Used by the hierarchy tools
+ * to anchor parent resolution.
+ */
+export const pillarsRootForNote = (noteAbsPath: string): string => {
+  if (KB_ROOT !== undefined) return realpathDeepestExisting(path.join(KB_ROOT, PILLARS))
+  const parts = noteAbsPath.split(path.sep)
+  const idx = parts.lastIndexOf(PILLARS)
+  if (idx === -1) throw new KbPathError(`Cannot locate a "${PILLARS}" directory in path: ${noteAbsPath}`)
+  return parts.slice(0, idx + 1).join(path.sep)
+}
+
+/**
  * Resolve and validate the KB root for a tree walk. `root` defaults to KB_ROOT.
  * Returns `<root>/Pillars` (realpath-ed) — the directory the walker descends.
  */

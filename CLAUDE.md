@@ -22,7 +22,7 @@ Run `bun run` with no args for the full script list.
 
 Tool names follow `<app>_<resource>_<action>` (snake_case) with `<app>` = `notion_mirror`. Plural resource for collection ops, singular for single-item ops. Current surface:
 
-- **notes** (single module, [src/tools/notes/index.ts](./src/tools/notes/index.ts)): `notion_mirror_note_status` (read), `notion_mirror_unpublished_list` (read, collection), `notion_mirror_note_publish` (write — non-idempotent: each force run creates a new page), `notion_mirror_note_archive` (destructive).
+- **notes** (single module, [src/tools/notes/index.ts](./src/tools/notes/index.ts)): `notion_mirror_note_status` (read), `notion_mirror_unpublished_list` (read, collection), `notion_mirror_note_publish` (write — non-idempotent: each force run creates a new page), `notion_mirror_note_move` (write — re-parents a published page), `notion_mirror_note_archive` (destructive).
 
 Deliberately **no** bulk-publish tool — bulk runs orchestrate `notion_mirror_unpublished_list` + repeated `notion_mirror_note_publish` from the calling agent, which owns sleep / rate limiting. Keeps the MCP atomic.
 
@@ -35,7 +35,7 @@ Deliberately **no** bulk-publish tool — bulk runs orchestrate `notion_mirror_u
 - explicit `readOnlyHint: false` AND `destructiveHint: false` → `write` (non-destructive mutation)
 - anything else (unannotated / partially annotated) → `destructive` (fail-safe)
 
-A tool registers when its derived level is at or below `MCP_NOTION_MIRROR_ACCESS_LEVEL` (default: `write`). The default `write` gate hides `notion_mirror_note_archive` (the only `destructive` tool) until the operator opts in with `MCP_NOTION_MIRROR_ACCESS_LEVEL=destructive`. The presets live in [src/utils/annotations.ts](./src/utils/annotations.ts) (`READ_ONLY`, `WRITE_REMOTE`, `DESTRUCTIVE_REMOTE`). New tools MUST set `annotations` explicitly to one of those presets — do not bypass the proxy.
+A tool registers when its derived level is at or below `MCP_NOTION_MIRROR_ACCESS_LEVEL` (default: `read`, fail-safe). The default gate exposes only the read tools; `write` adds publish + move, `destructive` adds archive. In practice the MCP is deployed with `write`. The presets live in [src/utils/annotations.ts](./src/utils/annotations.ts) (`READ_ONLY`, `WRITE_REMOTE`, `DESTRUCTIVE_REMOTE`). New tools MUST set `annotations` explicitly to one of those presets — do not bypass the proxy.
 
 ### Single HTTP client
 
@@ -44,6 +44,15 @@ All Notion API calls go through [src/notion-client.ts](./src/notion-client.ts). 
 ### Title property is discovered, not hard-coded
 
 The wiki's title property is named `"Page"` today, but that varies per wiki. `getDatabaseTitleProperty()` reads `GET /v1/databases/{id}` and caches the title-typed property name. Don't hard-code `"Page"`.
+
+### Hierarchical publishing (parent resolution)
+
+The mirror replicates the KB folder tree (ENHANCEMENT-SPEC-01). The KB→parent rule is split in two so the rule itself stays trivially testable:
+
+- [src/parent-resolver.ts](./src/parent-resolver.ts) — **pure** path→path (`deriveParent`, `ancestorIndexChain`). No `fs`. Keep it that way.
+- [src/parent-lookup.ts](./src/parent-lookup.ts) — `resolveParentTarget` reads the parent index note's frontmatter and returns a discriminated `ParentTarget` (`database-root` | `page` | `missing-index` | `parent-unpublished` | `malformed-parent-url`). The publish/move/status tools map that to a Notion parent, an `errorResult`, or a status field.
+
+**Notion properties shape depends on the parent kind** (a real API constraint, handled in `createMirrorPage`): under a `database_id` parent the title goes in the database's title-typed property (name from `getDatabaseTitleProperty`); under a `page_id` parent Notion only accepts the reserved `title` property. `notion_mirror_note_move` re-parents via `PATCH /v1/pages/{id}` with `{ parent }` and does NOT touch frontmatter (the URL is stable across moves). `notion_mirror_unpublished_list` returns the publishable closure (source notes + required unmirrored index ancestors) in tree order so a naive in-order publish always does parents first.
 
 ### Frontmatter is edited by line surgery, NOT a YAML round-trip
 

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const DB_ID = '36f9f7187cc280f69272e60aa89bff24'
+const PAGE_HEX = '3709f7187cc2814e8652f99fd36857ff'
 const PAGE_RESPONSE = { id: '3709f718-7cc2-814e-8652-f99fd36857ff', url: 'https://www.notion.so/Slug-3709f7187cc2814e8652f99fd36857ff', created_time: '2026-05-30T01:13:00.000Z' }
 
 const ok = (body: unknown) => new Response(JSON.stringify(body), { status: 200 })
@@ -51,10 +52,10 @@ describe('notion-client (mcp-notion-mirror)', () => {
   })
 
   describe('createMirrorPage', () => {
-    it('creates a page with the title property and banner+body children', async () => {
+    it('creates a database-parented page with the named title property', async () => {
       fetchMock.mockResolvedValueOnce(ok(PAGE_RESPONSE))
       const { createMirrorPage } = await import('./notion-client.js')
-      const result = await createMirrorPage({ databaseId: DB_ID, titleProperty: 'Page', title: 'My Note', children: [{ a: 1 }, { b: 2 }] })
+      const result = await createMirrorPage({ parent: { type: 'database_id', database_id: DB_ID }, titleProperty: 'Page', title: 'My Note', children: [{ a: 1 }, { b: 2 }] })
       expect(result).toEqual({ id: PAGE_RESPONSE.id, url: PAGE_RESPONSE.url, created_time: PAGE_RESPONSE.created_time })
       const [url, init] = fetchMock.mock.calls[0] ?? []
       expect(url).toBe('https://api.notion.test/v1/pages')
@@ -64,12 +65,27 @@ describe('notion-client (mcp-notion-mirror)', () => {
       expect(body.children).toHaveLength(2)
     })
 
+    it('creates a page-parented page with the reserved title property', async () => {
+      fetchMock.mockResolvedValueOnce(ok(PAGE_RESPONSE))
+      const { createMirrorPage } = await import('./notion-client.js')
+      await createMirrorPage({ parent: { type: 'page_id', page_id: PAGE_HEX }, title: 'Child', children: [{ a: 1 }] })
+      const body = JSON.parse(fetchMock.mock.calls[0]?.[1].body)
+      expect(body.parent).toEqual({ type: 'page_id', page_id: PAGE_HEX })
+      expect(body.properties).toEqual({ title: { title: [{ text: { content: 'Child' } }] } })
+    })
+
+    it('throws when a database parent is given without a title property name', async () => {
+      const { createMirrorPage, NotionApiError } = await import('./notion-client.js')
+      await expect(createMirrorPage({ parent: { type: 'database_id', database_id: DB_ID }, title: 'x', children: [] })).rejects.toThrow(NotionApiError)
+      expect(fetchMock).not.toHaveBeenCalled()
+    })
+
     it('appends children beyond the 100-block limit via PATCH /v1/blocks/{id}/children', async () => {
       fetchMock.mockResolvedValueOnce(ok(PAGE_RESPONSE)) // create
       fetchMock.mockResolvedValueOnce(ok({})) // append batch
       const { createMirrorPage } = await import('./notion-client.js')
       const children = Array.from({ length: 150 }, (_, i) => ({ i }))
-      await createMirrorPage({ databaseId: DB_ID, titleProperty: 'Page', title: 'Big', children })
+      await createMirrorPage({ parent: { type: 'database_id', database_id: DB_ID }, titleProperty: 'Page', title: 'Big', children })
       expect(fetchMock).toHaveBeenCalledTimes(2)
       const [createInit, appendCall] = [JSON.parse(fetchMock.mock.calls[0]?.[1].body), fetchMock.mock.calls[1]]
       expect(createInit.children).toHaveLength(100)
@@ -77,11 +93,33 @@ describe('notion-client (mcp-notion-mirror)', () => {
       expect(appendCall?.[1].method).toBe('PATCH')
       expect(JSON.parse(appendCall?.[1].body).children).toHaveLength(50)
     })
+  })
 
-    it('rejects a malformed database id before calling Notion', async () => {
-      const { createMirrorPage, NotionApiError } = await import('./notion-client.js')
-      await expect(createMirrorPage({ databaseId: 'not-hex', titleProperty: 'Page', title: 'x', children: [] })).rejects.toThrow(NotionApiError)
+  describe('getPage / movePage', () => {
+    it('getPage returns id/url and the raw parent object', async () => {
+      fetchMock.mockResolvedValueOnce(ok({ id: PAGE_RESPONSE.id, url: PAGE_RESPONSE.url, parent: { type: 'database_id', database_id: DB_ID } }))
+      const { getPage } = await import('./notion-client.js')
+      const page = await getPage(PAGE_HEX)
+      const [url, init] = fetchMock.mock.calls[0] ?? []
+      expect(url).toBe(`https://api.notion.test/v1/pages/${PAGE_HEX}`)
+      expect(init.method).toBe('GET')
+      expect(page.parent).toEqual({ type: 'database_id', database_id: DB_ID })
+    })
+
+    it('getPage rejects a malformed page id before calling Notion', async () => {
+      const { getPage, NotionApiError } = await import('./notion-client.js')
+      await expect(getPage('not-hex')).rejects.toThrow(NotionApiError)
       expect(fetchMock).not.toHaveBeenCalled()
+    })
+
+    it('movePage PATCHes the page with the new parent', async () => {
+      fetchMock.mockResolvedValueOnce(ok({}))
+      const { movePage } = await import('./notion-client.js')
+      await movePage(PAGE_HEX, { type: 'page_id', page_id: '0000000000000000000000000000abcd' })
+      const [url, init] = fetchMock.mock.calls[0] ?? []
+      expect(url).toBe(`https://api.notion.test/v1/pages/${PAGE_HEX}`)
+      expect(init.method).toBe('PATCH')
+      expect(JSON.parse(init.body)).toEqual({ parent: { type: 'page_id', page_id: '0000000000000000000000000000abcd' } })
     })
   })
 

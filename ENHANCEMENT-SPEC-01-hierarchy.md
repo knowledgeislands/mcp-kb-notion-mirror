@@ -29,14 +29,14 @@ After this enhancement, the wiki home shows top-level Pillars (`Engineering`, `O
 - `notion_mirror_unpublished_list` returns only KB notes that have `notion_source_url` set (i.e. drained from Notion). Folder-index notes that are KB-native (no `notion_source_url`) are invisible to it.
 - The wiki has 6 pages already published at the root, with no parent:
 
-  | KB path | Notion page id | Should live under |
-  | --- | --- | --- |
-  | `Pillars/Engineering/Bioweave/Multi-Instance and Multi-Tenant.md` | `3709f7187cc2814e8652f99fd36857ff` | `Bioweave` |
-  | `Pillars/Engineering/Bioweave/Platform Architecture.md` | `3709f7187cc2816686f5e2d12b30e795` | `Bioweave` |
-  | `Pillars/Engineering/Layers/Platform/Platform Conventions.md` | `3709f7187cc281edbaa4fa4ac239e809` | `Platform` |
-  | `Pillars/Engineering/Layers/Platform/Azure Account Structure.md` | `3709f7187cc28101b1a9f40b5c68b033` | `Platform` |
-  | `Pillars/Engineering/Layers/Platform/Module System.md` | `3709f7187cc281b79e41f5643e2140f1` | `Platform` |
-  | `Pillars/Engineering/Layers/Platform/Operations and Monitoring.md` | `3709f7187cc281d8a98add0a8cce0d4c` | `Platform` |
+  | KB path                                                            | Notion page id                     | Should live under |
+  | ------------------------------------------------------------------ | ---------------------------------- | ----------------- |
+  | `Pillars/Engineering/Bioweave/Multi-Instance and Multi-Tenant.md`  | `3709f7187cc2814e8652f99fd36857ff` | `Bioweave`        |
+  | `Pillars/Engineering/Bioweave/Platform Architecture.md`            | `3709f7187cc2816686f5e2d12b30e795` | `Bioweave`        |
+  | `Pillars/Engineering/Layers/Platform/Platform Conventions.md`      | `3709f7187cc281edbaa4fa4ac239e809` | `Platform`        |
+  | `Pillars/Engineering/Layers/Platform/Azure Account Structure.md`   | `3709f7187cc28101b1a9f40b5c68b033` | `Platform`        |
+  | `Pillars/Engineering/Layers/Platform/Module System.md`             | `3709f7187cc281b79e41f5643e2140f1` | `Platform`        |
+  | `Pillars/Engineering/Layers/Platform/Operations and Monitoring.md` | `3709f7187cc281d8a98add0a8cce0d4c` | `Platform`        |
 
   These six need to be re-parented after the enhancement (via the new `notion_mirror_note_move` tool — see below). The orchestrator handles that; the MCP just exposes the capability.
 
@@ -55,13 +55,11 @@ Let `P` = the KB note's path under `<KB_ROOT>/Pillars/...`.
 1. **The pillars root** — if `P == <KB_ROOT>/Pillars/Pillars.md`, the Notion parent is the wiki database (`{ type: "database_id", database_id: <WIKI_DB_ID> }`). This is the only page that parents at the database root.
 
 2. **Folder-index notes** — if the basename of `P` (sans `.md`) equals the basename of `P`'s containing directory, `P` is a folder index. Its parent is the index note of the **grandparent** folder:
-
    - `Pillars/Engineering/Engineering.md` → parent is `Pillars/Pillars.md`
    - `Pillars/Engineering/Bioweave/Bioweave.md` → parent is `Pillars/Engineering/Engineering.md`
    - `Pillars/Engineering/Layers/Backend/Backend Components/Backend Components.md` → parent is `Pillars/Engineering/Layers/Backend/Backend.md`
 
 3. **Leaf notes** — for any other note, the parent is the index note of its containing directory:
-
    - `Pillars/Engineering/Bioweave/Multi-Instance and Multi-Tenant.md` → parent is `Pillars/Engineering/Bioweave/Bioweave.md`
 
 **Parent lookup:** once the parent KB path is computed, the MCP reads its frontmatter and pulls `notion_mirror_url`, then extracts the 32-hex page id from the URL. The publish call uses `parent: { type: "page_id", page_id: <parent_page_id> }`.
@@ -77,6 +75,7 @@ Let `P` = the KB note's path under `<KB_ROOT>/Pillars/...`.
 The current list filter is "has `notion_source_url` AND no `notion_mirror_url`". Replace with: the **publishable closure**.
 
 Algorithm:
+
 1. Find all KB notes under `<root>/Pillars/` with `notion_source_url` set and no `notion_mirror_url` → call this `source_set`.
 2. For each note in `source_set`, walk up to the pillars root, collecting every required index note (per the resolution rule in Change 1). Skip an index if it already has `notion_mirror_url` (already published). Call this `index_set`.
 3. Return `source_set ∪ index_set`, **sorted in tree order** so a naive in-order iteration from the caller publishes parents before children. Tree order = breadth-first by depth, alphabetical within a depth; or equivalently, sort by path depth ascending, then path alphabetical.
@@ -85,13 +84,14 @@ Return shape unchanged otherwise: `{ root, count, notes: [path, ...], details: [
 
 ### Change 3 — New tool `notion_mirror_note_move`
 
-| Tool | Annotations | Args | Returns |
-| --- | --- | --- | --- |
+| Tool                      | Annotations                                   | Args              | Returns                                                 |
+| ------------------------- | --------------------------------------------- | ----------------- | ------------------------------------------------------- |
 | `notion_mirror_note_move` | `readOnlyHint: false, destructiveHint: false` | `kb_path: string` | `{ moved: true, page_id, previous_parent, new_parent }` |
 
 Re-parents an already-published mirror page to its auto-derived parent (per Change 1's resolution rule). Used to fix the six pages currently parented at the wiki root, and as a one-off recovery if a page ends up under the wrong parent.
 
 **Pipeline:**
+
 1. Read the KB note's frontmatter. Require `notion_mirror_url` to be set; otherwise return `errorResult("Note is not published — cannot move.")`.
 2. Extract the page id from `notion_mirror_url` (32-hex regex, same as the archive tool).
 3. Resolve the desired parent KB path using Change 1's rule. Require its `notion_mirror_url`; otherwise `errorResult("Publish parent first: <parent_kb_path>")`.
@@ -113,9 +113,9 @@ Extend the returned object to include the auto-derived parent state:
     "kb_path": "/Users/.../Pillars/Engineering/Bioweave/Bioweave.md",
     "kb_exists": true,
     "mirror_url": "https://www.notion.so/Bioweave-3709...",
-    "mirror_published": true
+    "mirror_published": true,
   },
-  "publish_blocked_by": null
+  "publish_blocked_by": null,
 }
 ```
 

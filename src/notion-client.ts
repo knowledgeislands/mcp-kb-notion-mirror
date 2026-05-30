@@ -106,6 +106,9 @@ export const getDatabaseTitleProperty = async (databaseId: string): Promise<stri
 /** Test-only: clear the title-property cache between cases. */
 export const _clearTitlePropertyCache = (): void => titlePropertyCache.clear()
 
+/** A Notion page parent — either a database (wiki root) or another page (folder index). */
+export type NotionParent = { type: 'database_id'; database_id: string } | { type: 'page_id'; page_id: string }
+
 interface NotionPage {
   id: string
   url: string
@@ -119,16 +122,36 @@ export interface CreatedPage {
 }
 
 /**
- * Create a mirror page in the wiki database. Notion caps `children` at 100 per
+ * Build the `properties` object for a page create. Under a database parent the
+ * title lives in the database's title-typed property (its name varies per
+ * wiki — discovered via getDatabaseTitleProperty). Under a page parent Notion
+ * only accepts the reserved `title` property.
+ */
+const titleProperties = (parent: NotionParent, title: string, titleProperty: string | undefined): Record<string, unknown> => {
+  const value = { title: [{ text: { content: title } }] }
+  if (parent.type === 'database_id') {
+    if (titleProperty === undefined) {
+      throw new NotionApiError(0, '', 'missing_title_property', 'A database-parented page needs the database title-property name.')
+    }
+    return { [titleProperty]: value }
+  }
+  return { title: value }
+}
+
+/**
+ * Create a mirror page under `parent`. Notion caps `children` at 100 per
  * request, so the first 100 blocks go in the create call and any remainder is
  * appended in 100-block batches via PATCH /v1/blocks/{id}/children.
+ *
+ * `titleProperty` is required for a database parent and ignored for a page
+ * parent (where the title property is always the reserved `title`).
  */
-export const createMirrorPage = async (params: { databaseId: string; titleProperty: string; title: string; children: unknown[] }): Promise<CreatedPage> => {
-  const { databaseId, titleProperty, title, children } = params
+export const createMirrorPage = async (params: { parent: NotionParent; title: string; children: unknown[]; titleProperty?: string }): Promise<CreatedPage> => {
+  const { parent, title, children, titleProperty } = params
   const head = children.slice(0, MAX_CHILDREN_PER_REQUEST)
   const page = await request<NotionPage>('POST', '/v1/pages', {
-    parent: { type: 'database_id', database_id: assertPageId(databaseId) },
-    properties: { [titleProperty]: { title: [{ text: { content: title } }] } },
+    parent,
+    properties: titleProperties(parent, title, titleProperty),
     children: head
   })
   for (let i = MAX_CHILDREN_PER_REQUEST; i < children.length; i += MAX_CHILDREN_PER_REQUEST) {
@@ -142,4 +165,27 @@ export const createMirrorPage = async (params: { databaseId: string; titleProper
 /** Archive (soft-delete) a page. Idempotent — archiving an archived page is a no-op success. */
 export const archivePage = async (pageId: string): Promise<void> => {
   await request('PATCH', `/v1/pages/${assertPageId(pageId)}`, { archived: true })
+}
+
+interface NotionPageWithParent {
+  id: string
+  url: string
+  parent: Record<string, unknown>
+}
+
+export interface FetchedPage {
+  id: string
+  url: string
+  parent: Record<string, unknown>
+}
+
+/** Fetch a page, returning its id/url and the raw Notion `parent` object (preserving Notion's shape). */
+export const getPage = async (pageId: string): Promise<FetchedPage> => {
+  const page = await request<NotionPageWithParent>('GET', `/v1/pages/${assertPageId(pageId)}`)
+  return { id: page.id, url: page.url, parent: page.parent }
+}
+
+/** Re-parent a page. Notion moves the page (and its content) to the new parent; the URL is stable. */
+export const movePage = async (pageId: string, parent: NotionParent): Promise<void> => {
+  await request('PATCH', `/v1/pages/${assertPageId(pageId)}`, { parent })
 }

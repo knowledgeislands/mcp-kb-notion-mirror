@@ -11,29 +11,41 @@ Given a KB note under `<KB_ROOT>/Pillars/` whose frontmatter records where it wa
 1. Strips the frontmatter and the leading `# Title` H1 (Notion takes the title from a page property).
 2. Converts the markdown body to Notion blocks via [`@tryfabric/martian`](https://github.com/tryfabric/martian) — paragraphs, headings, nested lists, code fences, blockquotes, dividers, GFM tables, inline formatting, links.
 3. Prepends a "Mirrored from Knowledge Base" banner callout dated with the publish day.
-4. Creates the page in the configured wiki database.
+4. Creates the page nested under its folder-index parent in the wiki (see [Hierarchy](#hierarchy)).
 5. Writes `notion_mirror_url` + `notion_mirror_published_at` back into the note's frontmatter (atomically, preserving field order and formatting).
 
-Bulk runs are **not** a single tool — list the unpublished notes, then call publish per note from the calling agent, pacing as you go. This keeps the MCP atomic.
+Bulk runs are **not** a single tool — list the unpublished notes (already returned in publish order), then call publish per note from the calling agent, pacing as you go. This keeps the MCP atomic.
 
 ## Tools
 
 ### `notion_mirror_note_status(kb_path)` — read
 
-Report a note's mirror state from its frontmatter (no Notion call). Returns `{ kb_path, notion_source_url, notion_mirror_url, notion_mirror_published_at, status, next_run, next_run_with_force }` where `status` is `published` | `unpublished`, `next_run` is what `publish` would do with no force (`publish` | `skip`), and `next_run_with_force` is what it would do with `force:true` (`publish` | `republish`).
+Report a note's mirror state from its frontmatter, plus its auto-derived Notion parent (no Notion call). Returns `{ kb_path, notion_source_url, notion_mirror_url, notion_mirror_published_at, status, next_run, next_run_with_force, parent, publish_blocked_by }`:
+
+- `status` is `published` | `unpublished`; `next_run` / `next_run_with_force` are what `publish` would do (`publish` | `skip` | `republish`).
+- `parent` is `{ kb_path, kb_exists, mirror_url, mirror_published[, parent_type] }` — the folder-index page this note will be nested under.
+- `publish_blocked_by` is `null` | `"missing-folder-index"` | `"parent-not-published"`.
 
 ### `notion_mirror_unpublished_list(root?)` — read
 
-List notes under `<root>/Pillars/` that have `notion_source_url` but no `notion_mirror_url` — drained from Notion but not yet mirrored back. `root` defaults to `MCP_NOTION_MIRROR_KB_ROOT`. Returns `{ root, count, notes: [path, ...], details: [{ path, source_url }, ...] }`.
+List the **publishable closure** under `<root>/Pillars/`: every note drained from Notion (`notion_source_url` set, no `notion_mirror_url`) plus every required folder-index ancestor that isn't mirrored yet. Sorted in **tree order** so iterating top-to-bottom always publishes parents before children. `root` defaults to `MCP_NOTION_MIRROR_KB_ROOT`. Returns `{ root, count, notes: [path, ...], details: [{ path, source_url? }, ...] }` (index notes have no `source_url`).
 
 ### `notion_mirror_note_publish(kb_path, force?)` — write
 
-Mirror one note and write the URL back into its frontmatter.
+Mirror one note, nested under its folder-index parent, and write the URL back into its frontmatter.
 
 - `kb_path` (string) — the KB markdown note.
 - `force` (boolean, default `false`) — re-publish even if already mirrored. Archives the old mirror page first, then creates a new one (the URL changes).
 
-On publish returns `{ url, page_id, published_at }`. When already mirrored and `force` is false, returns `{ skipped: true, existing_url }` and leaves the note untouched.
+On publish returns `{ url, page_id, published_at }`. When already mirrored and `force` is false, returns `{ skipped: true, existing_url }`. Errors `Publish parent first: <path>` if the parent index isn't mirrored yet, or `Folder index missing: <path>` if a required index note is absent on disk.
+
+### `notion_mirror_note_move(kb_path)` — write
+
+Re-parent an already-published mirror page to its auto-derived folder-index parent. The page content and URL are unchanged — only its position in the wiki tree. Used to re-home legacy flat-rooted pages, or fix a misplaced page.
+
+- `kb_path` (string) — the KB markdown note (must already have `notion_mirror_url`).
+
+Returns `{ moved: true, page_id, previous_parent, new_parent }` (parents in Notion's shape). No `dry_run` — moving doesn't touch content; use `notion_mirror_note_status` to preview where a page sits.
 
 ### `notion_mirror_note_archive(kb_path, dry_run?)` — destructive
 
@@ -44,17 +56,29 @@ Archive the Notion page referenced by `notion_mirror_url` and clear the two mirr
 
 Dry run returns `{ dry_run: true, would_archive_page_id, would_archive_url, would_clear_fields }`. A real run returns `{ archived: true, page_id, url }`. A note with no `notion_mirror_url` returns `{ archived: false, reason }`.
 
+## Hierarchy
+
+The mirror replicates the KB's folder tree so the wiki gains navigation for free. The KB enforces a folder-index convention: **every folder under `Pillars/` has a note named after the folder** (e.g. `Pillars/Engineering/Engineering.md`). Each published page is parented at its folder's index page, derived purely from the KB path:
+
+| KB note                                       | Notion parent                                                |
+| --------------------------------------------- | ------------------------------------------------------------ |
+| `Pillars/Pillars.md` (the pillars root index) | the wiki **database** root                                   |
+| a folder index (`…/Bioweave/Bioweave.md`)     | its **grandparent**'s index (`…/Engineering/Engineering.md`) |
+| any other (leaf) note                         | its **containing folder**'s index (`…/Bioweave/Bioweave.md`) |
+
+**Orchestrator pattern:** parents must be published before children. Call `notion_mirror_unpublished_list` (which returns the closure in dependency order, indexes included) and publish each entry top-to-bottom. For pages published flat-rooted by an earlier version, call `notion_mirror_note_move` once per page (parents-first) to re-home them — the URL is preserved.
+
 ## Access levels
 
-Tools are gated by `MCP_NOTION_MIRROR_ACCESS_LEVEL` (default `write`). Each level implies the lower ones:
+Tools are gated by `MCP_NOTION_MIRROR_ACCESS_LEVEL` (default `read`, fail-safe like the rest of the family). Each level implies the lower ones:
 
-| Level         | Tools registered                                              |
-| ------------- | ------------------------------------------------------------- |
-| `read`        | `notion_mirror_note_status`, `notion_mirror_unpublished_list` |
-| `write`       | the above + `notion_mirror_note_publish`                      |
-| `destructive` | the above + `notion_mirror_note_archive`                      |
+| Level         | Tools registered                                                    |
+| ------------- | ------------------------------------------------------------------- |
+| `read`        | `notion_mirror_note_status`, `notion_mirror_unpublished_list`       |
+| `write`       | the above + `notion_mirror_note_publish`, `notion_mirror_note_move` |
+| `destructive` | the above + `notion_mirror_note_archive`                            |
 
-Archive stays hidden until you explicitly opt in with `MCP_NOTION_MIRROR_ACCESS_LEVEL=destructive`.
+Publishing mutates both the Notion wiki and the local KB note, so it's opt-in via `write`; archive additionally requires `destructive`. In practice this MCP is deployed with `MCP_NOTION_MIRROR_ACCESS_LEVEL=write`.
 
 ## Setup
 
@@ -101,7 +125,7 @@ Restart Claude.
 | `MCP_NOTION_MIRROR_TOKEN`               | yes      | —                                              | Notion internal-integration secret (`ntn_…`). Needs Insert + Update content and a Connection to the wiki. |
 | `MCP_NOTION_MIRROR_WIKI_DATABASE_ID`    | yes      | —                                              | Wiki database (data source) id new mirror pages are created in.                                           |
 | `MCP_NOTION_MIRROR_KB_ROOT`             | no       | unset                                          | Absolute KB root containing `Pillars/`. When unset, `kb_path` args must be absolute.                      |
-| `MCP_NOTION_MIRROR_ACCESS_LEVEL`        | no       | `write`                                        | `read` / `write` / `destructive`. `destructive` enables the archive tool.                                 |
+| `MCP_NOTION_MIRROR_ACCESS_LEVEL`        | no       | `read`                                         | `read` / `write` / `destructive`. `write` enables publish + move; `destructive` adds archive.             |
 | `MCP_NOTION_MIRROR_BANNER_TEXT`         | no       | KB default sentence                            | Override the banner's trailing sentence (the bold dated prefix is always kept).                           |
 | `MCP_NOTION_MIRROR_API_BASE_URL`        | no       | `https://api.notion.com`                       | Notion API base URL.                                                                                      |
 | `MCP_NOTION_MIRROR_AUDIT_LOG`           | no       | `writes`                                       | Audit-log scope. `off` / `writes` (non-read tool calls) / `all` (every invocation).                       |

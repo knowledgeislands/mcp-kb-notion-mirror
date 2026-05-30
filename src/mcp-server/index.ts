@@ -43,7 +43,7 @@ console.error(`  MCP_NOTION_MIRROR_AUDIT_LOG=${AUDIT_LOG_MODE}${AUDIT_LOG_MODE =
 
 const server = new McpServer({
   name: 'mcp-notion-mirror',
-  version: '0.1.0'
+  version: '1.0.0'
 })
 server.registerTool = makeAccessGatedRegister(server)
 

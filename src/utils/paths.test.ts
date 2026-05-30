@@ -29,6 +29,25 @@ afterEach(async () => {
   delete process.env.MCP_NOTION_MIRROR_KB_ROOT
 })
 
+describe('pillarsRootForNote', () => {
+  it('returns the realpath of KB_ROOT/Pillars when KB_ROOT is set', async () => {
+    process.env.MCP_NOTION_MIRROR_KB_ROOT = kbRoot
+    vi.resetModules()
+    const { pillarsRootForNote } = await importPaths()
+    expect(pillarsRootForNote(path.join(pillars, 'sub', 'note.md'))).toBe(real(pillars))
+  })
+
+  it('derives the Pillars ancestor from the note path when KB_ROOT is unset', async () => {
+    const { pillarsRootForNote } = await importPaths()
+    expect(pillarsRootForNote('/some/kb/Pillars/Engineering/Bioweave/Note.md')).toBe('/some/kb/Pillars')
+  })
+
+  it('throws when KB_ROOT is unset and the path has no Pillars segment', async () => {
+    const { pillarsRootForNote, KbPathError } = await importPaths()
+    expect(() => pillarsRootForNote('/some/kb/Other/Note.md')).toThrow(KbPathError)
+  })
+})
+
 describe('resolveKbNotePath (KB_ROOT set)', () => {
   beforeEach(() => {
     process.env.MCP_NOTION_MIRROR_KB_ROOT = kbRoot

@@ -1,7 +1,7 @@
 {
   "name": "@knowledgeislands/mcp-notion-mirror",
   "description": "MCP that mirrors local Knowledge Base markdown notes to a Notion wiki and records the resulting page URLs back into the notes' frontmatter",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "author": "kris@kris.me.uk",
   "bin": {
     "mcp-notion-mirror": "dist/mcp-server/index.js"

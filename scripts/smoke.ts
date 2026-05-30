@@ -14,7 +14,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 
 // Single source of truth for the tool surface — kept in sync with
 // src/tools/notes/index.ts and the access-level tests. Add a tool → update both.
-const EXPECTED_TOOLS = ['notion_mirror_note_status', 'notion_mirror_unpublished_list', 'notion_mirror_note_publish', 'notion_mirror_note_archive'] as const
+const EXPECTED_TOOLS = ['notion_mirror_note_status', 'notion_mirror_unpublished_list', 'notion_mirror_note_publish', 'notion_mirror_note_move', 'notion_mirror_note_archive'] as const
 
 const die = (msg: string, detail?: unknown): never => {
   console.error(`✗ smoke failed: ${msg}`)

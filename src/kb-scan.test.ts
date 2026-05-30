@@ -1,61 +1,100 @@
-import * as fs from 'node:fs/promises'
+import * as fs from 'node:fs'
+import * as fsp from 'node:fs/promises'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { findUnpublishedNotes } from './kb-scan.js'
+import { findPublishableClosure } from './kb-scan.js'
 
-const withSource = (url: string) => `---\nstatus: x\nnotion_source_url: ${url}\n---\nbody\n`
-const withSourceAndMirror = (s: string, m: string) => `---\nstatus: x\nnotion_source_url: ${s}\nnotion_mirror_url: ${m}\n---\nbody\n`
+const source = (url: string) => `---\nstatus: x\nnotion_source_url: ${url}\n---\nbody\n`
+const sourceAndMirror = (s: string, m: string) => `---\nstatus: x\nnotion_source_url: ${s}\nnotion_mirror_url: ${m}\n---\nbody\n`
+const indexNote = `---\nstatus: x\n---\nbody\n`
+const indexPublished = (m: string) => `---\nstatus: x\nnotion_mirror_url: ${m}\n---\nbody\n`
 
-describe('findUnpublishedNotes', () => {
+describe('findPublishableClosure', () => {
   let pillars: string
+  const rel = (p: string) => path.relative(pillars, p)
 
   beforeEach(async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'mcp-notion-mirror-scan-'))
-    pillars = path.join(root, 'Pillars')
-    await fs.mkdir(path.join(pillars, 'A'), { recursive: true })
-    await fs.mkdir(path.join(pillars, '.hidden'), { recursive: true })
-    await fs.mkdir(path.join(pillars, 'node_modules'), { recursive: true })
-
-    await fs.writeFile(path.join(pillars, 'A', 'note1.md'), withSource('https://www.notion.so/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'))
-    await fs.writeFile(path.join(pillars, 'A', 'aaa-note.md'), withSource('https://www.notion.so/99999999999999999999999999999999'))
-    await fs.writeFile(path.join(pillars, 'A', 'note2.md'), withSourceAndMirror('https://www.notion.so/bb', 'https://www.notion.so/cc'))
-    await fs.writeFile(path.join(pillars, 'A', 'no-frontmatter.md'), 'just text')
-    await fs.writeFile(path.join(pillars, 'A', 'notes.txt'), withSource('https://www.notion.so/dd')) // not .md
-    await fs.writeFile(path.join(pillars, '.hidden', 'secret.md'), withSource('https://www.notion.so/ee'))
-    await fs.writeFile(path.join(pillars, 'node_modules', 'pkg.md'), withSource('https://www.notion.so/ff'))
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'mcp-notion-mirror-closure-'))
+    await fsp.mkdir(path.join(root, 'Pillars', 'Engineering', 'Bioweave'), { recursive: true })
+    pillars = fs.realpathSync(path.join(root, 'Pillars'))
+    // Folder-index notes (KB-native, no source_url, not yet mirrored)
+    await fsp.writeFile(path.join(pillars, 'Pillars.md'), indexNote)
+    await fsp.writeFile(path.join(pillars, 'Engineering', 'Engineering.md'), indexNote)
+    await fsp.writeFile(path.join(pillars, 'Engineering', 'Bioweave', 'Bioweave.md'), indexNote)
+    // A leaf drained from Notion, not yet mirrored
+    await fsp.writeFile(path.join(pillars, 'Engineering', 'Bioweave', 'Multi.md'), source('https://www.notion.so/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'))
+    // A leaf already mirrored — excluded
+    await fsp.writeFile(path.join(pillars, 'Engineering', 'Bioweave', 'Done.md'), sourceAndMirror('https://www.notion.so/bb', 'https://www.notion.so/cc'))
+    // A non-markdown file — ignored by the walk
+    await fsp.writeFile(path.join(pillars, 'Engineering', 'Bioweave', 'diagram.png'), 'not markdown')
   })
 
   afterEach(async () => {
-    await fs.rm(path.dirname(pillars), { recursive: true, force: true })
+    await fsp.rm(path.dirname(pillars), { recursive: true, force: true })
   })
 
-  it('returns only notes with a source URL but no mirror URL, sorted by path, pruning hidden + node_modules', async () => {
-    const notes = await findUnpublishedNotes(pillars)
-    expect(notes.map((n) => path.basename(n.path))).toEqual(['aaa-note.md', 'note1.md'])
-    expect(notes[1]?.source_url).toBe('https://www.notion.so/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
+  it('returns the source note plus its required index ancestors, in tree order (parents first)', async () => {
+    const notes = await findPublishableClosure(pillars)
+    expect(notes.map((n) => rel(n.path))).toEqual([
+      'Pillars.md',
+      path.join('Engineering', 'Engineering.md'),
+      path.join('Engineering', 'Bioweave', 'Bioweave.md'),
+      path.join('Engineering', 'Bioweave', 'Multi.md')
+    ])
+  })
+
+  it('attaches source_url only to source notes, omitting it for index notes', async () => {
+    const notes = await findPublishableClosure(pillars)
+    const byRel = Object.fromEntries(notes.map((n) => [rel(n.path), n]))
+    expect(byRel['Pillars.md'].source_url).toBeUndefined()
+    expect(byRel[path.join('Engineering', 'Bioweave', 'Multi.md')].source_url).toBe('https://www.notion.so/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
+  })
+
+  it('skips index ancestors that are already mirrored', async () => {
+    await fsp.writeFile(path.join(pillars, 'Engineering', 'Engineering.md'), indexPublished('https://www.notion.so/Engineering-3709f7187cc2814e8652f99fd36857ff'))
+    const notes = await findPublishableClosure(pillars)
+    expect(notes.map((n) => rel(n.path))).toEqual(['Pillars.md', path.join('Engineering', 'Bioweave', 'Bioweave.md'), path.join('Engineering', 'Bioweave', 'Multi.md')])
+  })
+
+  it('does not invent missing index files (publish surfaces that error instead)', async () => {
+    await fsp.rm(path.join(pillars, 'Engineering', 'Bioweave', 'Bioweave.md'))
+    const notes = await findPublishableClosure(pillars)
+    expect(notes.map((n) => rel(n.path))).toEqual(['Pillars.md', path.join('Engineering', 'Engineering.md'), path.join('Engineering', 'Bioweave', 'Multi.md')])
+  })
+
+  it('returns [] when nothing is drained-but-unmirrored', async () => {
+    await fsp.rm(path.join(pillars, 'Engineering', 'Bioweave', 'Multi.md'))
+    expect(await findPublishableClosure(pillars)).toEqual([])
   })
 
   it('returns [] for a non-existent root', async () => {
-    expect(await findUnpublishedNotes(path.join(pillars, 'does-not-exist'))).toEqual([])
+    expect(await findPublishableClosure(path.join(pillars, 'nope'))).toEqual([])
   })
 
-  it('honours the depth cap (subdirectories beyond maxDepth are skipped)', async () => {
-    await fs.writeFile(path.join(pillars, 'root-note.md'), withSource('https://www.notion.so/gg'))
-    const notes = await findUnpublishedNotes(pillars, 0)
-    // depth 0 reads only the Pillars dir itself; A/note1.md (depth 1) is skipped
-    expect(notes.map((n) => path.basename(n.path))).toEqual(['root-note.md'])
+  it('prunes hidden dirs and node_modules', async () => {
+    await fsp.mkdir(path.join(pillars, '.hidden'), { recursive: true })
+    await fsp.mkdir(path.join(pillars, 'node_modules'), { recursive: true })
+    await fsp.writeFile(path.join(pillars, '.hidden', 'h.md'), source('https://www.notion.so/dd'))
+    await fsp.writeFile(path.join(pillars, 'node_modules', 'n.md'), source('https://www.notion.so/ee'))
+    const notes = await findPublishableClosure(pillars)
+    expect(notes.some((n) => n.path.includes('.hidden') || n.path.includes('node_modules'))).toBe(false)
   })
 
-  it('skips notes it cannot read rather than failing the walk', async () => {
-    const unreadable = path.join(pillars, 'A', 'locked.md')
-    await fs.writeFile(unreadable, withSource('https://www.notion.so/hh'))
-    await fs.chmod(unreadable, 0o000)
+  it('honours the depth cap', async () => {
+    // depth 0 reads only the Pillars dir; the source note is at depth 3, so nothing qualifies
+    expect(await findPublishableClosure(pillars, 0)).toEqual([])
+  })
+
+  it('skips notes it cannot read', async () => {
+    const locked = path.join(pillars, 'Engineering', 'Bioweave', 'Locked.md')
+    await fsp.writeFile(locked, source('https://www.notion.so/ff'))
+    await fsp.chmod(locked, 0o000)
     try {
-      const notes = await findUnpublishedNotes(pillars)
-      expect(notes.map((n) => path.basename(n.path))).toEqual(['aaa-note.md', 'note1.md'])
+      const notes = await findPublishableClosure(pillars)
+      expect(notes.some((n) => n.path.endsWith('Locked.md'))).toBe(false)
     } finally {
-      await fs.chmod(unreadable, 0o600)
+      await fsp.chmod(locked, 0o600)
     }
   })
 })

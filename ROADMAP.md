@@ -24,5 +24,9 @@ These are _known_ limitations of the first iteration, not bugs:
 
 ## Tooling
 
-- Smoke test (`bun run test:smoke`) — boot the built server and verify the wire-level tool surface matches in-process registration. mcp-gmail has the reference implementation (`scripts/smoke.ts` + CI step); this repo verifies the surface ad hoc but lacks the committed script.
-- Live integration test gated behind a real token env var (`src/**/*.live.test.ts`), skipped by default, for occasional end-to-end verification against a throwaway Notion workspace.
+- Live integration test gated behind a real token env var (`src/**/*.live.test.ts`), skipped by default, for occasional end-to-end verification against a throwaway Notion workspace — in particular to confirm the `notion_mirror_note_move` PATCH re-parents a database-rooted page to a page parent (see the open question carried from ENHANCEMENT-SPEC-01).
+
+## Shipped
+
+- **v0.2.0 — Hierarchical publishing.** Pages are nested under their folder-index parent (parent auto-derived from KB path); `notion_mirror_unpublished_list` returns the publishable closure in tree order; new `notion_mirror_note_move` re-homes legacy flat-rooted pages. See README → Hierarchy.
+- **v0.1.0** — initial publish/status/list/archive surface, smoke test, audit log.
