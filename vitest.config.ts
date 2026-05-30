@@ -21,8 +21,8 @@ export default defineConfig({
         'src/mcp-server/index.ts',
         'src/tools/**/index.ts',
         // CLI entry point — pure argv parsing + human-readable printing built
-        // on the api.ts return shapes (which ARE covered); exercised by hand.
-        'src/orchestrator/cli.ts',
+        // on the library return shapes (which ARE covered); exercised by hand.
+        'src/cli/cli.ts',
         // Pure data: annotation presets and the shared Notion-arg zod schemas
         // are referenced only from tool registration sites (themselves excluded).
         'src/utils/annotations.ts',

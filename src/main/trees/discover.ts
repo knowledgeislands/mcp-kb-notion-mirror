@@ -1,5 +1,5 @@
 /**
- * Discovery + ordering + parent resolution for the orchestrator.
+ * Discovery + ordering + parent resolution for the tree walk.
  *
  * The convention this encodes (layout-agnostic, folder-index based): a folder's
  * index note (`<Folder>/<Folder>.md`, basename == containing-folder basename) is
@@ -9,19 +9,21 @@
  * caller-supplied `rootParent`.
  *
  * Operations act on a `subtree` — a kb-relative folder path (e.g.
- * "Pillars/Engineering") — which may be ANY folder under kbRoot. There is no
- * fixed root folder and no fixed wiki database.
+ * "Alpha/Beta") — which may be ANY folder under kbRoot. There is no fixed root
+ * folder and no fixed wiki database.
  *
  * All functions are pure: filesystem + settings in, plain values out — no
- * Notion calls, no logging. The async work happens in api.ts.
+ * Notion calls, no logging. The async work happens in index.ts. The low-level
+ * walk helpers (`loadNote`, `isExcluded`, `isEligible`) are exported so the
+ * roots walk (src/main/roots) can reuse them.
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { basename, dirname, join, relative } from 'node:path'
-import { extractPageIdFromUrl, type NotionIcon, type NotionParent } from '../main/notion-client/index.js'
-import type { OrchestratorSettings } from './settings.js'
+import { extractPageIdFromUrl, type NotionIcon, type NotionParent } from '../notion-client/index.js'
+import type { MirrorSettings } from './settings.js'
 
 export interface Note {
-  /** Path relative to `kbRoot`, e.g. "Pillars/Engineering/Engineering.md". */
+  /** Path relative to `kbRoot`, e.g. "Alpha/Beta/Beta.md". */
   kbPath: string
   fullPath: string
   /** Filename without `.md`. */
@@ -36,8 +38,8 @@ export interface Note {
 
 /**
  * Read top-level scalar `key: value` lines from a YAML frontmatter block. Lists,
- * nested maps, and blank lines are ignored — the orchestrator only needs simple
- * fields (`icon`, `mirror`, `kb_notion_mirror_url`, etc.).
+ * nested maps, and blank lines are ignored — the walk only needs simple fields
+ * (`icon`, `mirror`, `kb_notion_mirror_url`, etc.).
  */
 export const readFrontmatter = (content: string): Record<string, string> => {
   if (!content.startsWith('---\n')) return {}
@@ -53,7 +55,7 @@ export const readFrontmatter = (content: string): Record<string, string> => {
   return out
 }
 
-const walkMd = function* (dir: string): Generator<string> {
+export const walkMd = function* (dir: string): Generator<string> {
   for (const name of readdirSync(dir)) {
     if (name.startsWith('.')) continue // skip .git, .obsidian, .DS_Store, …
     const full = join(dir, name)
@@ -63,7 +65,7 @@ const walkMd = function* (dir: string): Generator<string> {
   }
 }
 
-const loadNote = (kbRoot: string, fullPath: string): Note => {
+export const loadNote = (kbRoot: string, fullPath: string): Note => {
   const kbPath = relative(kbRoot, fullPath)
   const fields = readFrontmatter(readFileSync(fullPath, 'utf-8'))
   const base = basename(fullPath, '.md')
@@ -77,59 +79,17 @@ const loadNote = (kbRoot: string, fullPath: string): Note => {
  * value other than `false`). When set on a folder index, `discover` additionally
  * prunes the whole subtree — see below.
  */
-const isExcluded = (n: Note): boolean => {
+export const isExcluded = (n: Note): boolean => {
   if (n.fields.mirror === 'exclude') return true
   const v = n.fields.kb_notion_mirror_exclude
   return v !== undefined && v !== '' && v !== 'false'
 }
 
-const isEligible = (n: Note, s: OrchestratorSettings): boolean => {
+export const isEligible = (n: Note, s: MirrorSettings): boolean => {
   if (isExcluded(n)) return false
   if (s.skipKbPaths.has(n.kbPath)) return false
   if (s.skipPrefixes.some((p) => n.base.startsWith(p))) return false
   return true
-}
-
-/** A folder declared as a mirror root via `kb_notion_mirror_root` frontmatter. */
-export interface MirrorRoot {
-  /** kb-relative folder to walk, e.g. "Pillars/Engineering". */
-  subtree: string
-  /** kb-path of the root's index note, e.g. "Pillars/Engineering/Engineering.md". */
-  indexKbPath: string
-  /** The Notion parent the root index attaches under. */
-  parent: NotionParent
-}
-
-/**
- * Parse a `kb_notion_mirror_root` value into a Notion parent. A bare id (or
- * `db:<id>`) is a wiki database parent; `page:<id>` nests the root under a page.
- */
-const parseRootParent = (value: string): NotionParent => {
-  const v = value.trim()
-  if (v.startsWith('page:')) return { type: 'page_id', page_id: v.slice('page:'.length).trim() }
-  return { type: 'database_id', database_id: v.replace(/^db:/, '').trim() }
-}
-
-/**
- * Scan the whole KB for folders that declare themselves a mirror root via
- * `kb_notion_mirror_root: <parent>` on their index note. The value is the Notion
- * parent the root attaches under (a wiki database id by default, or `page:<id>`
- * to nest under a page). A subtree is mirrored iff its index is a root; anything
- * not under a declared root is never walked — so excluding an area from the
- * mirror is simply a matter of not marking it a root.
- */
-export const discoverRoots = (kbRoot: string, s: OrchestratorSettings): MirrorRoot[] => {
-  const roots: MirrorRoot[] = []
-  for (const full of walkMd(kbRoot)) {
-    const n = loadNote(kbRoot, full)
-    const value = n.fields.kb_notion_mirror_root
-    if (!value || value === 'false') continue
-    if (!isEligible(n, s)) continue
-    if (!n.isIndex) throw new Error(`kb_notion_mirror_root must be set on a folder index (note name == folder name), not ${n.kbPath}`)
-    if (value === 'true') throw new Error(`kb_notion_mirror_root on ${n.kbPath} must be the Notion parent id (a wiki database id), not "true"`)
-    roots.push({ subtree: dirname(n.kbPath), indexKbPath: n.kbPath, parent: parseRootParent(value) })
-  }
-  return roots.sort((a, b) => a.subtree.localeCompare(b.subtree))
 }
 
 /**
@@ -138,7 +98,7 @@ export const discoverRoots = (kbRoot: string, s: OrchestratorSettings): MirrorRo
  * entire subtree under that folder is pruned, so excluding a folder never
  * orphans its children.
  */
-export const discover = (kbRoot: string, subtree: string, s: OrchestratorSettings): Note[] => {
+export const discover = (kbRoot: string, subtree: string, s: MirrorSettings): Note[] => {
   const rootPath = join(kbRoot, subtree)
   const all: Note[] = []
   for (const full of walkMd(rootPath)) all.push(loadNote(kbRoot, full))
@@ -154,7 +114,7 @@ export const discover = (kbRoot: string, subtree: string, s: OrchestratorSetting
  * from the `subtree` dir). Parents always come before children, so
  * `resolveParent` can find their URLs.
  */
-export const publishOrder = (kbRoot: string, subtree: string, _s: OrchestratorSettings, notes: Note[]): Note[] => {
+export const publishOrder = (kbRoot: string, subtree: string, _s: MirrorSettings, notes: Note[]): Note[] => {
   const byDir = new Map<string, Note[]>()
   for (const n of notes) {
     const d = dirname(n.fullPath)
@@ -212,11 +172,11 @@ const pageParentFrom = (idx: string, urlByKbPath: Map<string, string>): NotionPa
 
 /**
  * Build a wikilink → URL map by re-reading each note's `kb_notion_mirror_url` from
- * disk. We read from disk (not from `notes[].fields`) because publish writes
- * URLs back to the file as it goes, so a fresh read gives the post-pass-1 state.
+ * disk. We read from disk (not from `notes[].fields`) because touch writes URLs
+ * back to the file as it goes, so a fresh read gives the post-touch state.
  *
- * Two aliases per note: bare basename (for `[[Engineering]]`) and the full path
- * sans `.md` (for `[[Pillars/Engineering/Engineering|Engineering]]`).
+ * Two aliases per note: bare basename (for `[[Beta]]`) and the full path sans
+ * `.md` (for `[[Alpha/Beta/Beta|Beta]]`).
  */
 export const buildLinkMap = (notes: Note[]): Record<string, string> => {
   const map: Record<string, string> = {}
@@ -231,7 +191,7 @@ export const buildLinkMap = (notes: Note[]): Record<string, string> => {
 }
 
 /** Build a Lucide external-icon for a kebab-case name, or undefined if no name. */
-export const iconFor = (name: string | undefined, s: OrchestratorSettings): NotionIcon | undefined => {
+export const iconFor = (name: string | undefined, s: MirrorSettings): NotionIcon | undefined => {
   if (!name) return undefined
   return { type: 'external', external: { url: `${s.iconBaseUrl}/${name}.svg` } }
 }

@@ -8,13 +8,16 @@
  * YAML frontmatter. The KB is canonical; the mirror is a derivative read
  * surface for non-KB consumers.
  *
- * Two layers of tools:
- *   - the per-note mirror tools (notion_mirror_*) act on one `kb_path` per call
- *     and (for mutations) a Notion `parent` the caller supplies — file-aware but
+ * Three resources of tools:
+ *   - note tools (kb_notion_mirror_note_*) act on one `kb_path` per call and (for
+ *     mutations) a Notion `parent` the caller supplies — file-aware but
  *     layout-agnostic: no directory walking, no parent resolution;
- *   - the subtree orchestrator tools (notion_mirror_tree_*) walk a caller-given
- *     `subtree` folder under the KB root and apply the folder-index hierarchy
- *     convention, attaching the subtree-root under a caller-given `parent`.
+ *   - tree tools (kb_notion_mirror_tree_*) walk a caller-given `subtree` folder
+ *     under the KB root and apply the folder-index hierarchy convention,
+ *     attaching the subtree-root under a caller-given `parent`;
+ *   - the roots tool (kb_notion_mirror_roots_list) discovers the folders declared
+ *     as mirror roots (kb_notion_mirror_root frontmatter) so a client can drive
+ *     the tree tools per root without rescanning the KB.
  *
  * Configuration (environment variables):
  *   MCP_KB_NOTION_MIRROR_TOKEN            Required. Notion internal-integration
@@ -37,7 +40,8 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { loadConfig } from '../config/index.js'
-import { registerMirrorTools } from '../tools/mirror/index.js'
+import { registerNoteTools } from '../tools/note/index.js'
+import { registerRootsTools } from '../tools/roots/index.js'
 import { registerTreeTools } from '../tools/tree/index.js'
 import { makeAccessGatedRegister } from '../utils/access-level.js'
 
@@ -60,8 +64,9 @@ server.registerTool = makeAccessGatedRegister(server, config.accessLevel, {
   keep: config.auditLogKeep
 })
 
-registerMirrorTools(server, config)
+registerNoteTools(server, config)
 registerTreeTools(server, config)
+registerRootsTools(server, config)
 
 const main = async (): Promise<void> => {
   const transport = new StdioServerTransport()

@@ -11,13 +11,12 @@
  *   openWorldHint   — interacts with services outside the local environment
  *
  * This MCP's surface (every tool calls the Notion API → all open-world):
- *   - notion_mirror_get fetches a page → READ_ONLY_REMOTE.
- *   - notion_mirror_publish creates a new Notion page each call (non-idempotent)
- *     and writes back to the KB note → WRITE_REMOTE.
- *   - notion_mirror_move re-parents an existing page (non-idempotent end state
- *     depends on current parent) → WRITE_REMOTE.
- *   - notion_mirror_unpublish archives a Notion page (idempotent end state) and
- *     clears two frontmatter fields → DESTRUCTIVE_REMOTE.
+ *   - kb_notion_mirror_*_get / _status / _preflight read → READ_ONLY_REMOTE.
+ *   - kb_notion_mirror_*_touch / _update / _move reach an idempotent end state
+ *     (touch skips an already-mirrored note; update replaces in place; move
+ *     re-parents to a fixed target) → WRITE_REMOTE_IDEMPOTENT.
+ *   - kb_notion_mirror_*_delete archives a Notion page (idempotent end state)
+ *     and clears frontmatter → DESTRUCTIVE_REMOTE.
  *
  * The access-level gate keys off readOnlyHint/destructiveHint only:
  *   readOnlyHint:true → read · destructiveHint:true → destructive ·
@@ -26,5 +25,7 @@
 export const READ_ONLY_REMOTE = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true } as const
 
 export const WRITE_REMOTE = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } as const
+
+export const WRITE_REMOTE_IDEMPOTENT = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true } as const
 
 export const DESTRUCTIVE_REMOTE = { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true } as const

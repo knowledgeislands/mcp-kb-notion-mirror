@@ -5,7 +5,7 @@
   "author": "kris@kris.me.uk",
   "bin": {
     "mcp-kb-notion-mirror": "dist/mcp-server/index.js",
-    "mcp-kb-notion-mirror-publish": "dist/orchestrator/cli.js"
+    "mcp-kb-notion-mirror-publish": "dist/cli/cli.js"
   },
   "bugs": {
     "url": "https://github.com/knowledgeislands/mcp-kb-notion-mirror/issues"
@@ -44,13 +44,21 @@
       "types": "./dist/main/notion-client/index.d.ts",
       "import": "./dist/main/notion-client/index.js"
     },
-    "./mirror": {
-      "types": "./dist/main/mirror/index.d.ts",
-      "import": "./dist/main/mirror/index.js"
+    "./notes": {
+      "types": "./dist/main/notes/index.d.ts",
+      "import": "./dist/main/notes/index.js"
     },
-    "./orchestrator": {
-      "types": "./dist/orchestrator/index.d.ts",
-      "import": "./dist/orchestrator/index.js"
+    "./trees": {
+      "types": "./dist/main/trees/index.d.ts",
+      "import": "./dist/main/trees/index.js"
+    },
+    "./roots": {
+      "types": "./dist/main/roots/index.d.ts",
+      "import": "./dist/main/roots/index.js"
+    },
+    "./cli": {
+      "types": "./dist/cli/index.d.ts",
+      "import": "./dist/cli/index.js"
     },
     "./package.json": "./package.json"
   },
@@ -77,7 +85,7 @@
     "url": "git+https://github.com/knowledgeislands/mcp-kb-notion-mirror.git"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && chmod +x dist/mcp-server/index.js dist/orchestrator/cli.js",
+    "build": "tsc -p tsconfig.build.json && chmod +x dist/mcp-server/index.js dist/cli/cli.js",
     "clean": "rm -rf {dist,node_modules}",
     "deps:missing": "bunx depcheck --json | bunx node-jq --sort-keys '.' | bunx node-jq '.missing | keys | .[]' | xargs bun add -D",
     "deps:unused": "bunx depcheck --json | bunx node-jq --sort-keys '.' | bunx node-jq '.devDependencies[]' | xargs bun remove",

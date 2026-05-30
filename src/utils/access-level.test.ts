@@ -16,9 +16,9 @@ const makeStub = () => {
 const gateAt = (accessLevel: AccessLevel) => {
   const { calls, stub } = makeStub()
   const gated = makeAccessGatedRegister(stub as unknown as Parameters<typeof makeAccessGatedRegister>[0], accessLevel, AUDIT_OFF)
-  gated('notion_mirror_get', { title: 't', description: 'd', annotations: READ_ONLY_REMOTE } as never, (async () => ({ content: [] })) as never)
-  gated('notion_mirror_publish', { title: 't', description: 'd', annotations: WRITE_REMOTE } as never, (async () => ({ content: [] })) as never)
-  gated('notion_mirror_unpublish', { title: 't', description: 'd', annotations: DESTRUCTIVE_REMOTE } as never, (async () => ({ content: [] })) as never)
+  gated('kb_notion_mirror_note_get', { title: 't', description: 'd', annotations: READ_ONLY_REMOTE } as never, (async () => ({ content: [] })) as never)
+  gated('kb_notion_mirror_note_touch', { title: 't', description: 'd', annotations: WRITE_REMOTE } as never, (async () => ({ content: [] })) as never)
+  gated('kb_notion_mirror_note_delete', { title: 't', description: 'd', annotations: DESTRUCTIVE_REMOTE } as never, (async () => ({ content: [] })) as never)
   return calls
 }
 
@@ -42,15 +42,15 @@ describe('levelFromAnnotations', () => {
 
 describe('makeAccessGatedRegister', () => {
   it('registers only read-level tools at gate=read', () => {
-    expect(gateAt('read')).toEqual(['notion_mirror_get'])
+    expect(gateAt('read')).toEqual(['kb_notion_mirror_note_get'])
   })
 
   it('registers read + write but not destructive at gate=write', () => {
-    expect(gateAt('write')).toEqual(['notion_mirror_get', 'notion_mirror_publish'])
+    expect(gateAt('write')).toEqual(['kb_notion_mirror_note_get', 'kb_notion_mirror_note_touch'])
   })
 
   it('registers every level at gate=destructive', () => {
-    expect(gateAt('destructive')).toEqual(['notion_mirror_get', 'notion_mirror_publish', 'notion_mirror_unpublish'])
+    expect(gateAt('destructive')).toEqual(['kb_notion_mirror_note_get', 'kb_notion_mirror_note_touch', 'kb_notion_mirror_note_delete'])
   })
 
   it('treats an unannotated tool as destructive (fail-safe — skipped at gate=write)', () => {

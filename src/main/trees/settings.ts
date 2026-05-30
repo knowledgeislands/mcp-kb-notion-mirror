@@ -1,6 +1,6 @@
 /**
- * Orchestrator settings — the small KB-specific knobs the orchestrator needs in
- * addition to the per-call Config that the mirror operations already take.
+ * Mirror walk settings — the small KB-specific knobs the tree/roots walks need
+ * in addition to the per-call Config that the note verbs already take.
  *
  * These are layout-agnostic: there is NO fixed root folder and NO fixed wiki
  * parent. The subtree to walk and the Notion parent its root attaches under are
@@ -10,7 +10,7 @@
  * Loaded from env at CLI / tool-handler start; constructed directly in tests.
  */
 
-export interface OrchestratorSettings {
+export interface MirrorSettings {
   /** Filename prefixes whose notes are excluded from publishing. Default ["+"]. */
   skipPrefixes: string[]
   /** Specific kb-paths (relative to kbRoot) to skip. Default: []. */
@@ -34,7 +34,7 @@ const splitCsv = (raw: string | undefined, fallback: string[]): string[] => {
  *   MCP_KB_NOTION_MIRROR_SKIP_PATHS     default []
  *   MCP_KB_NOTION_MIRROR_ICON_BASE_URL  default the lucide-static CDN URL
  */
-export const loadOrchestratorSettings = (env: NodeJS.ProcessEnv = process.env): OrchestratorSettings => {
+export const loadMirrorSettings = (env: NodeJS.ProcessEnv = process.env): MirrorSettings => {
   const skipPrefixes = splitCsv(env.MCP_KB_NOTION_MIRROR_SKIP_PREFIXES, ['+'])
   const skipKbPaths = new Set(splitCsv(env.MCP_KB_NOTION_MIRROR_SKIP_PATHS, []))
   const iconBaseUrl = (env.MCP_KB_NOTION_MIRROR_ICON_BASE_URL ?? 'https://unpkg.com/lucide-static@latest/icons').replace(/\/+$/, '')
