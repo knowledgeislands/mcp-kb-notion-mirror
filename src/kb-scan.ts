@@ -1,9 +1,11 @@
 /**
  * Depth-limited walk of `<root>/Pillars/` computing the **publishable closure**:
  * the KB notes drained from Notion (`notion_source_url` set, `notion_mirror_url`
- * absent) PLUS every required folder-index ancestor that isn't yet mirrored, so
- * a caller iterating the result in order always publishes parents before
- * children.
+ * absent) PLUS every required folder-index ancestor that isn't yet mirrored —
+ * where "required" spans the ancestors of EVERY drained note, including ones
+ * already mirrored flat (so their orphaned pages can later be re-parented). The
+ * result is ordered so a caller iterating it top-to-bottom always publishes
+ * parents before children (indexes before their sibling leaves at each depth).
  *
  * Hidden dirs and `node_modules` are pruned; a note that can't be read is
  * skipped rather than failing the whole walk (per-item resilience). Required
@@ -13,7 +15,7 @@
 import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
 import { parseFrontmatter } from './frontmatter.js'
-import { ancestorIndexChain } from './parent-resolver.js'
+import { ancestorIndexChain, isFolderIndex } from './parent-resolver.js'
 
 const DEFAULT_MAX_DEPTH = 12
 
@@ -62,16 +64,22 @@ export const findPublishableClosure = async (pillarsRoot: string, maxDepth: numb
   await walk(pillarsRoot, 0)
 
   const selected = new Set<string>()
+  // Source notes that still need a mirror page created.
   for (const [notePath, info] of all) {
     if (info.source_url && !info.has_mirror) selected.add(notePath)
   }
-  // For each source note, pull in every required ancestor index that exists on
-  // disk and isn't mirrored yet. A source note's chain covers the ancestors of
-  // any index it pulls in, so there's no need to recurse on added indexes.
-  for (const notePath of [...selected]) {
+  // Pull in every required ancestor index (exists on disk, not yet mirrored) of
+  // EVERY note drained from Notion — whether or not that note is itself already
+  // mirrored. Already-published-but-orphaned leaves (mirrored flat by a pre-
+  // hierarchy version) still need their ancestor indexes published so the
+  // orchestrator can later `notion_mirror_note_move` them under the right
+  // parent (ENHANCEMENT-SPEC-02 Issue 2). A note's chain covers the ancestors
+  // of any index it pulls in, so there's no need to recurse on added indexes.
+  for (const [notePath, info] of all) {
+    if (!info.source_url) continue
     for (const indexPath of ancestorIndexChain(notePath, pillarsRoot)) {
-      const info = all.get(indexPath)
-      if (info && !info.has_mirror) selected.add(indexPath)
+      const ancestor = all.get(indexPath)
+      if (ancestor && !ancestor.has_mirror) selected.add(indexPath)
     }
   }
 
@@ -83,7 +91,11 @@ export const findPublishableClosure = async (pillarsRoot: string, maxDepth: numb
     if (src) note.source_url = src
     return note
   })
-  // Tree order: shallowest first (parents precede children), alphabetical within a depth.
-  result.sort((a, b) => a.depth - b.depth || a.path.localeCompare(b.path))
+  // Tree order: shallowest first (parents precede children); within a depth a
+  // folder index sorts before its sibling leaves (so `Foo/Foo.md` precedes
+  // `Foo/Bar.md`, which are equal-depth but parent→child); then alphabetical.
+  // This guarantees every ancestor precedes its descendants for a naive
+  // top-to-bottom publish (ENHANCEMENT-SPEC-02 Issue 1).
+  result.sort((a, b) => a.depth - b.depth || Number(isFolderIndex(b.path)) - Number(isFolderIndex(a.path)) || a.path.localeCompare(b.path))
   return result
 }

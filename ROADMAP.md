@@ -28,5 +28,6 @@ These are _known_ limitations of the first iteration, not bugs:
 
 ## Shipped
 
+- **v0.2.1 — Publish-order correctness** (ENHANCEMENT-SPEC-02). `notion_mirror_unpublished_list` now (1) orders a folder index before its equal-depth sibling leaves so a naive top-to-bottom publish never hits `Publish parent first`, and (2) includes the unpublished ancestor indexes of _already-mirrored_ (flat-rooted) leaves, so orphaned pages can be published-then-moved. No tool-surface change.
 - **v0.2.0 — Hierarchical publishing.** Pages are nested under their folder-index parent (parent auto-derived from KB path); `notion_mirror_unpublished_list` returns the publishable closure in tree order; new `notion_mirror_note_move` re-homes legacy flat-rooted pages. See README → Hierarchy.
 - **v0.1.0** — initial publish/status/list/archive surface, smoke test, audit log.

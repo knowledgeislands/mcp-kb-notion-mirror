@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ancestorIndexChain, deriveParent } from './parent-resolver.js'
+import { ancestorIndexChain, deriveParent, isFolderIndex } from './parent-resolver.js'
 
 const PILLARS = '/kb/Pillars'
 
@@ -50,5 +50,23 @@ describe('ancestorIndexChain', () => {
 
   it('returns an empty chain for the pillars root index itself', () => {
     expect(ancestorIndexChain('/kb/Pillars/Pillars.md', PILLARS)).toEqual([])
+  })
+})
+
+describe('isFolderIndex', () => {
+  it('is true for a folder index (basename === containing dir)', () => {
+    expect(isFolderIndex('/kb/Pillars/Engineering/Engineering.md')).toBe(true)
+  })
+
+  it('is true for the pillars root index', () => {
+    expect(isFolderIndex('/kb/Pillars/Pillars.md')).toBe(true)
+  })
+
+  it('is false for a leaf note', () => {
+    expect(isFolderIndex('/kb/Pillars/Engineering/Bioweave/Multi-Instance and Multi-Tenant.md')).toBe(false)
+  })
+
+  it('matches case-insensitively on the .md extension', () => {
+    expect(isFolderIndex('/kb/Pillars/Engineering/Engineering.MD')).toBe(true)
   })
 })

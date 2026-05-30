@@ -26,6 +26,15 @@ const stripMd = (p: string): string => path.basename(p).replace(/\.md$/i, '')
 const indexOf = (dir: string): string => path.join(dir, `${path.basename(dir)}.md`)
 
 /**
+ * True when `noteAbsPath` is its folder's index note (basename === containing
+ * dir name) — e.g. `…/Engineering/Engineering.md`. The pillars root index
+ * (`…/Pillars/Pillars.md`) also satisfies this. Single source of truth for the
+ * folder-index test, reused by `deriveParent` (rule 2) and by the publishable
+ * closure's sibling-ordering tiebreaker (publish indexes before their leaves).
+ */
+export const isFolderIndex = (noteAbsPath: string): boolean => stripMd(noteAbsPath) === path.basename(path.dirname(noteAbsPath))
+
+/**
  * Resolve the parent of `noteAbsPath` given the absolute realpath of the
  * `Pillars` directory. Both paths should be realpath-resolved by the caller so
  * the equality check in rule 1 is reliable.
@@ -41,6 +50,7 @@ export const deriveParent = (noteAbsPath: string, pillarsRootAbsPath: string): P
 
   // Rule 2: folder index → grandparent's index.
   if (base === path.basename(dir)) {
+    // (equivalently isFolderIndex(noteAbsPath); inlined to avoid recomputing base)
     return { type: 'page', parentKbPath: indexOf(path.dirname(dir)) }
   }
 

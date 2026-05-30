@@ -63,8 +63,11 @@ describe('findPublishableClosure', () => {
     expect(notes.map((n) => rel(n.path))).toEqual(['Pillars.md', path.join('Engineering', 'Engineering.md'), path.join('Engineering', 'Bioweave', 'Multi.md')])
   })
 
-  it('returns [] when nothing is drained-but-unmirrored', async () => {
+  it('returns [] when no drained note needs publishing (no unmirrored source, no orphaned ancestor)', async () => {
+    // Remove the unpublished leaf AND the already-mirrored leaf — with no note
+    // bearing a source_url left, nothing (source or ancestor index) is publishable.
     await fsp.rm(path.join(pillars, 'Engineering', 'Bioweave', 'Multi.md'))
+    await fsp.rm(path.join(pillars, 'Engineering', 'Bioweave', 'Done.md'))
     expect(await findPublishableClosure(pillars)).toEqual([])
   })
 
@@ -96,5 +99,46 @@ describe('findPublishableClosure', () => {
     } finally {
       await fsp.chmod(locked, 0o600)
     }
+  })
+
+  // ENHANCEMENT-SPEC-02 Issue 1: a folder index and its sibling leaves share a
+  // depth; the index must sort first so a top-to-bottom publish does parents
+  // before children even when a leaf's name sorts earlier alphabetically.
+  it('orders a folder index before its sibling leaves at the same depth', async () => {
+    await fsp.mkdir(path.join(pillars, 'Operations'), { recursive: true })
+    await fsp.writeFile(path.join(pillars, 'Operations', 'Operations.md'), indexNote)
+    // "Azure" sorts before "Operations" alphabetically — the bug put it first.
+    await fsp.writeFile(path.join(pillars, 'Operations', 'Azure.md'), source('https://www.notion.so/0000000000000000000000000000aaaa'))
+    await fsp.writeFile(path.join(pillars, 'Operations', 'Basic walkthrough.md'), source('https://www.notion.so/0000000000000000000000000000bbbb'))
+    const notes = await findPublishableClosure(pillars)
+    const ops = notes.map((n) => rel(n.path)).filter((p) => p.startsWith(`Operations${path.sep}`))
+    expect(ops).toEqual([path.join('Operations', 'Operations.md'), path.join('Operations', 'Azure.md'), path.join('Operations', 'Basic walkthrough.md')])
+  })
+
+  it('places every folder-tree ancestor before its descendants in the result', async () => {
+    await fsp.mkdir(path.join(pillars, 'Operations'), { recursive: true })
+    await fsp.writeFile(path.join(pillars, 'Operations', 'Operations.md'), indexNote)
+    await fsp.writeFile(path.join(pillars, 'Operations', 'Azure.md'), source('https://www.notion.so/0000000000000000000000000000aaaa'))
+    const order = (await findPublishableClosure(pillars)).map((n) => rel(n.path))
+    const folderOf = (p: string) => (path.basename(p, '.md') === path.basename(path.dirname(p)) ? path.dirname(path.dirname(p)) : path.dirname(p))
+    // For each note, its containing folder's index (if present) must come earlier.
+    for (let i = 0; i < order.length; i++) {
+      const parentIndex = path.join(folderOf(order[i]), `${path.basename(folderOf(order[i]))}.md`)
+      const pIdx = order.indexOf(parentIndex)
+      if (pIdx !== -1 && parentIndex !== order[i]) expect(pIdx).toBeLessThan(i)
+    }
+  })
+
+  // ENHANCEMENT-SPEC-02 Issue 2: an already-mirrored (flat-rooted) leaf still
+  // needs its unpublished ancestor indexes surfaced so they can be published
+  // and the orphaned leaf later moved under them.
+  it('includes ancestor indexes of an already-published (orphaned) leaf', async () => {
+    // Remove the unpublished leaf so the ONLY drained note under Bioweave is mirrored.
+    await fsp.rm(path.join(pillars, 'Engineering', 'Bioweave', 'Multi.md'))
+    await fsp.writeFile(path.join(pillars, 'Engineering', 'Bioweave', 'Orphan.md'), sourceAndMirror('https://www.notion.so/11', 'https://www.notion.so/Orphan-22'))
+    const notes = (await findPublishableClosure(pillars)).map((n) => rel(n.path))
+    expect(notes).toEqual(['Pillars.md', path.join('Engineering', 'Engineering.md'), path.join('Engineering', 'Bioweave', 'Bioweave.md')])
+    // The orphaned leaf itself is NOT republished — only its missing ancestors.
+    expect(notes).not.toContain(path.join('Engineering', 'Bioweave', 'Orphan.md'))
   })
 })
