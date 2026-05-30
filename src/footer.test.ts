@@ -1,14 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const PARENT = 'a'.repeat(32)
+const CONTENT = '1'.repeat(32)
 const CHILD_A = 'b'.repeat(32)
 const CHILD_B = 'c'.repeat(32)
 const SENT = 'd'.repeat(32)
 const OLD_BULLET = 'e'.repeat(32)
-const CHILD_NEW = 'f'.repeat(32)
 
-const childPage = (id: string, title: string) => ({ id, type: 'child_page', child_page: { title } })
-const sentinel = (id: string) => ({ id, type: 'heading_2', heading_2: { rich_text: [{ plain_text: '📂 Child Pages' }] } })
+const content = (id: string) => ({ id, type: 'paragraph', paragraph: { rich_text: [{ plain_text: 'body' }] } })
+const childPage = (id: string) => ({ id, type: 'child_page', child_page: { title: 'X' } })
+const heading = (id: string, text: string) => ({ id, type: 'heading_2', heading_2: { rich_text: [{ plain_text: text }] } })
 const oldBullet = (id: string) => ({ id, type: 'bulleted_list_item', bulleted_list_item: { rich_text: [{ plain_text: 'old' }] } })
 
 const childrenPage = (results: unknown[], next: string | null = null) => new Response(JSON.stringify({ results, has_more: next !== null, next_cursor: next }), { status: 200 })
@@ -17,7 +18,7 @@ const ok = (body: unknown = {}) => new Response(JSON.stringify(body), { status: 
 interface Call {
   method: string
   url: string
-  body?: unknown
+  body?: { children?: Array<{ type: string; heading_2?: { rich_text: Array<{ text: { content: string } }> } }>; after?: string }
 }
 
 describe('footer', () => {
@@ -39,130 +40,131 @@ describe('footer', () => {
   })
 
   describe('buildFooterBlocks', () => {
-    it('returns [] for no children (no orphan heading)', async () => {
-      const { buildFooterBlocks } = await import('./footer.js')
-      expect(buildFooterBlocks([])).toEqual([])
-    })
-
-    it('returns the sentinel heading then one mention bullet per child', async () => {
+    it('is a single "Child Pages" heading with no folder emoji and no bullets', async () => {
       const { buildFooterBlocks, SENTINEL_TEXT } = await import('./footer.js')
-      const blocks = buildFooterBlocks([
-        { id: CHILD_A, title: 'A' },
-        { id: CHILD_B, title: 'B' }
-      ])
-      expect(blocks).toHaveLength(3)
-      expect((blocks[0] as unknown as { heading_2: { rich_text: Array<{ text: { content: string } }> } }).heading_2.rich_text[0].text.content).toBe(SENTINEL_TEXT)
-      expect((blocks[1] as unknown as { bulleted_list_item: { rich_text: Array<{ mention: { page: { id: string } } }> } }).bulleted_list_item.rich_text[0].mention.page.id).toBe(CHILD_A)
-      expect((blocks[2] as unknown as { bulleted_list_item: { rich_text: Array<{ mention: { page: { id: string } } }> } }).bulleted_list_item.rich_text[0].mention.page.id).toBe(CHILD_B)
+      expect(SENTINEL_TEXT).toBe('Child Pages')
+      const blocks = buildFooterBlocks()
+      expect(blocks).toHaveLength(1)
+      expect((blocks[0] as unknown as { type: string; heading_2: { rich_text: Array<{ text: { content: string } }> } }).type).toBe('heading_2')
+      expect((blocks[0] as unknown as { heading_2: { rich_text: Array<{ text: { content: string } }> } }).heading_2.rich_text[0].text.content).toBe('Child Pages')
     })
   })
 
   describe('refreshFooter', () => {
-    // Route a single fetch call, recording it, and reply by method + URL.
-    const route = (children: unknown[][]) => {
+    // Route a single fetch, recording it, replying by method (+ pagination on GET).
+    const route = (pages: unknown[][]) => {
       let getCount = 0
       fetchMock.mockImplementation(async (url: string, init?: { method?: string; body?: string }) => {
         const method = init?.method ?? 'GET'
         calls.push({ method, url, body: init?.body ? JSON.parse(init.body) : undefined })
         if (method === 'GET') {
-          const pageIdx = Math.min(getCount, children.length - 1)
+          const idx = Math.min(getCount, pages.length - 1)
           getCount++
-          // children is an array of pages; last page has next_cursor null
-          const next = pageIdx < children.length - 1 ? `cur${pageIdx}` : null
-          return childrenPage(children[pageIdx], next)
+          return childrenPage(pages[idx], idx < pages.length - 1 ? `cur${idx}` : null)
         }
         return ok()
       })
     }
+    const patch = () => calls.find((c) => c.method === 'PATCH')
+    const deletes = () => calls.filter((c) => c.method === 'DELETE').map((c) => c.url)
 
-    it('appends a child-pages footer when there is no prior sentinel', async () => {
-      route([[childPage(CHILD_A, 'A'), childPage(CHILD_B, 'B')]])
+    it('inserts the heading right before the first child page when there is no prior footer', async () => {
+      route([[content(CONTENT), childPage(CHILD_A)]])
       const { refreshFooter } = await import('./footer.js')
       await refreshFooter(PARENT)
-      expect(calls.filter((c) => c.method === 'DELETE')).toHaveLength(0)
-      const patch = calls.find((c) => c.method === 'PATCH')
-      expect(patch?.url).toBe(`https://api.notion.test/v1/blocks/${PARENT}/children`)
-      const appended = (patch?.body as { children: Array<{ type: string }> }).children
-      expect(appended.map((b) => b.type)).toEqual(['heading_2', 'bulleted_list_item', 'bulleted_list_item'])
+      expect(deletes()).toHaveLength(0)
+      expect(patch()?.url).toBe(`https://api.notion.test/v1/blocks/${PARENT}/children`)
+      expect(patch()?.body?.children?.[0].heading_2?.rich_text[0].text.content).toBe('Child Pages')
+      expect(patch()?.body?.after).toBe(CONTENT) // anchored just before the first child page
     })
 
-    it('deletes the prior footer (sentinel + its bullets) before appending, sparing child pages', async () => {
-      route([[childPage(CHILD_A, 'A'), sentinel(SENT), oldBullet(OLD_BULLET)]])
+    it('cleans up a legacy "📂 Child Pages" heading + mention bullets, sparing child pages after it', async () => {
+      route([[content(CONTENT), heading(SENT, '📂 Child Pages'), oldBullet(OLD_BULLET), childPage(CHILD_A)]])
       const { refreshFooter } = await import('./footer.js')
       await refreshFooter(PARENT)
-      const deleted = calls.filter((c) => c.method === 'DELETE').map((c) => c.url)
-      expect(deleted).toEqual([`https://api.notion.test/v1/blocks/${SENT}`, `https://api.notion.test/v1/blocks/${OLD_BULLET}`])
-      expect(deleted.some((u) => u.includes(CHILD_A))).toBe(false)
-      expect(calls.some((c) => c.method === 'PATCH')).toBe(true)
+      expect(deletes()).toEqual([`https://api.notion.test/v1/blocks/${SENT}`, `https://api.notion.test/v1/blocks/${OLD_BULLET}`])
+      expect(patch()?.body?.after).toBe(CONTENT)
+      expect(patch()?.body?.children?.[0].heading_2?.rich_text[0].text.content).toBe('Child Pages')
     })
 
-    it('spares a child_page that was created after the footer', async () => {
-      route([[sentinel(SENT), oldBullet(OLD_BULLET), childPage(CHILD_NEW, 'New')]])
+    it('is idempotent: removes the current heading and re-inserts it in the same place', async () => {
+      route([[content(CONTENT), heading(SENT, 'Child Pages'), childPage(CHILD_A)]])
       const { refreshFooter } = await import('./footer.js')
       await refreshFooter(PARENT)
-      const deleted = calls.filter((c) => c.method === 'DELETE').map((c) => c.url)
-      expect(deleted).toEqual([`https://api.notion.test/v1/blocks/${SENT}`, `https://api.notion.test/v1/blocks/${OLD_BULLET}`])
-      const patch = calls.find((c) => c.method === 'PATCH')
-      const appended = (patch?.body as { children: Array<{ bulleted_list_item?: { rich_text: Array<{ mention: { page: { id: string } } }> } }> }).children
-      expect(appended[1].bulleted_list_item?.rich_text[0].mention.page.id).toBe(CHILD_NEW)
+      expect(deletes()).toEqual([`https://api.notion.test/v1/blocks/${SENT}`]) // child spared
+      expect(patch()?.body?.after).toBe(CONTENT)
     })
 
-    it('deletes the old footer and appends nothing when there are no child pages', async () => {
-      route([[sentinel(SENT), oldBullet(OLD_BULLET)]])
+    it('appends the heading at the end (no anchor) when a child page is the very first block', async () => {
+      route([[childPage(CHILD_A), childPage(CHILD_B)]])
       const { refreshFooter } = await import('./footer.js')
       await refreshFooter(PARENT)
-      expect(calls.filter((c) => c.method === 'DELETE')).toHaveLength(2)
-      expect(calls.some((c) => c.method === 'PATCH')).toBe(false)
+      expect(patch()?.body?.after).toBeUndefined()
+      expect(patch()?.body?.children?.[0].heading_2?.rich_text[0].text.content).toBe('Child Pages')
+    })
+
+    it('deletes a stale heading and appends nothing when there are no child pages', async () => {
+      route([[content(CONTENT), heading(SENT, 'Child Pages')]])
+      const { refreshFooter } = await import('./footer.js')
+      await refreshFooter(PARENT)
+      expect(deletes()).toEqual([`https://api.notion.test/v1/blocks/${SENT}`])
+      expect(patch()).toBeUndefined()
+    })
+
+    it('is a no-op (single GET) when there is neither a heading nor any child page', async () => {
+      route([[content(CONTENT)]])
+      const { refreshFooter } = await import('./footer.js')
+      await refreshFooter(PARENT)
+      expect(calls.map((c) => c.method)).toEqual(['GET'])
     })
 
     it('follows pagination across multiple GET pages', async () => {
-      route([[childPage(CHILD_A, 'A')], [childPage(CHILD_B, 'B')]])
+      route([[content(CONTENT)], [childPage(CHILD_A)]])
       const { refreshFooter } = await import('./footer.js')
       await refreshFooter(PARENT)
       const gets = calls.filter((c) => c.method === 'GET')
       expect(gets).toHaveLength(2)
       expect(gets[1].url).toContain('start_cursor=cur0')
-      const appended = (calls.find((c) => c.method === 'PATCH')?.body as { children: unknown[] }).children
-      expect(appended).toHaveLength(3) // heading + A + B
+      expect(patch()?.body?.after).toBe(CONTENT)
     })
 
-    it('serialises refreshes for the same parent (no interleaving)', async () => {
-      route([[childPage(CHILD_A, 'A')]])
-      const { refreshFooter } = await import('./footer.js')
-      await Promise.all([refreshFooter(PARENT), refreshFooter(PARENT)])
-      // With a per-parent lock the calls run GET,PATCH,GET,PATCH — not GET,GET,…
-      expect(calls.map((c) => c.method)).toEqual(['GET', 'PATCH', 'GET', 'PATCH'])
-    })
-
-    it('tolerates odd heading blocks and untitled child pages when scanning for the sentinel', async () => {
+    it('tolerates odd heading blocks (no inner / no plain_text) while scanning for the sentinel', async () => {
+      const H1 = '7'.repeat(32)
+      const H2 = '8'.repeat(32)
       route([
         [
-          { id: 'h1', type: 'heading_2' }, // no inner object
-          { id: 'h2', type: 'heading_2', heading_2: { rich_text: [{}] } }, // item without plain_text
-          { id: CHILD_A, type: 'child_page', child_page: {} } // child page without a title
+          { id: H1, type: 'heading_2' }, // no heading_2 object
+          { id: H2, type: 'heading_2', heading_2: { rich_text: [{}] } }, // item without plain_text
+          childPage(CHILD_A)
         ]
       ])
       const { refreshFooter } = await import('./footer.js')
       await refreshFooter(PARENT)
-      expect(calls.filter((c) => c.method === 'DELETE')).toHaveLength(0) // no sentinel matched
-      const appended = (calls.find((c) => c.method === 'PATCH')?.body as { children: Array<{ bulleted_list_item?: { rich_text: Array<{ mention: { page: { id: string } } }> } }> }).children
-      expect(appended[1].bulleted_list_item?.rich_text[0].mention.page.id).toBe(CHILD_A)
+      expect(deletes()).toHaveLength(0) // neither odd heading is the sentinel
+      expect(patch()?.body?.after).toBe(H2) // anchored to the block before the first child page
+    })
+
+    it('serialises refreshes for the same parent (no interleaving)', async () => {
+      route([[content(CONTENT), childPage(CHILD_A)]])
+      const { refreshFooter } = await import('./footer.js')
+      await Promise.all([refreshFooter(PARENT), refreshFooter(PARENT)])
+      expect(calls.map((c) => c.method)).toEqual(['GET', 'PATCH', 'GET', 'PATCH'])
     })
 
     it('continues the per-parent chain after a failed refresh (lock survives rejection)', async () => {
       let n = 0
-      fetchMock.mockImplementation(async (url: string, init?: { method?: string; body?: string }) => {
+      fetchMock.mockImplementation(async (url: string, init?: { method?: string }) => {
         const method = init?.method ?? 'GET'
         calls.push({ method, url })
         n++
-        if (n === 1) return new Response(JSON.stringify({ code: 'x', message: 'boom' }), { status: 500 }) // first refresh's GET fails
-        if (method === 'GET') return childrenPage([childPage(CHILD_A, 'A')])
+        if (n === 1) return new Response(JSON.stringify({ code: 'x', message: 'boom' }), { status: 500 })
+        if (method === 'GET') return childrenPage([content(CONTENT), childPage(CHILD_A)])
         return ok()
       })
       const { refreshFooter } = await import('./footer.js')
       const [first, second] = await Promise.allSettled([refreshFooter(PARENT), refreshFooter(PARENT)])
-      expect(first.status).toBe('rejected') // its own GET 500 surfaced to the caller
-      expect(second.status).toBe('fulfilled') // chain survived and the second refresh completed
+      expect(first.status).toBe('rejected')
+      expect(second.status).toBe('fulfilled')
     })
   })
 })

@@ -1,77 +1,84 @@
 /**
  * Child-pages footer maintenance.
  *
- * Every page-parented mirror page gets a "📂 Child Pages" footer listing its
- * immediate child pages as Notion @mentions. The footer is MIRROR-ONLY — never
- * written into the KB source — and is the mechanism that surfaces child pages
- * inside a parent's body (the wiki sidebar shows the tree; the page body does
- * not unless we add this).
+ * Notion already renders a parent's child pages inline as native `child_page`
+ * blocks (clickable, with their own icons). The footer's only job is to LABEL
+ * that section with a single "Child Pages" heading sitting immediately above
+ * those native links — we do NOT duplicate the children as a bulleted mention
+ * list. The footer is MIRROR-ONLY: never written into the KB source.
  *
- * It is identifiable by a sentinel `heading_2` whose text is exactly
- * `📂 Child Pages`. A future "read mirror back into the KB" path MUST recognise
- * this sentinel and strip the footer before importing.
+ * The heading is identifiable by a sentinel `heading_2` whose text is exactly
+ * `Child Pages`. A future "read mirror back into the KB" path MUST recognise
+ * this sentinel and strip it before importing.
  *
- * `buildFooterBlocks` is pure (children → blocks). `refreshFooter` is the
- * side-effecting regenerate: fetch children, drop the old footer, append a
- * fresh one from the current Notion-side child list. Refreshes are serialised
- * per parent id (in-memory lock) so concurrent sibling publishes don't race.
+ * `refreshFooter` regenerates the heading: it removes any prior footer heading
+ * (and legacy mention bullets that followed it), then — if the page has any
+ * child pages — inserts a single heading right before the first one. New child
+ * pages Notion appends at the end naturally fall under the heading. Refreshes
+ * are serialised per parent id (in-memory lock) so concurrent sibling
+ * publishes don't race.
  */
 import { appendBlockChildren, deleteBlock, getBlockChildren, type NotionBlock } from './notion-client.js'
 
-/** The sentinel heading text that marks the start of the footer. */
-export const SENTINEL_TEXT = '📂 Child Pages'
+/** The sentinel heading text that marks the footer. */
+export const SENTINEL_TEXT = 'Child Pages'
+/** The pre-1.x footer heading (with a folder emoji); recognised so it gets cleaned up. */
+const LEGACY_SENTINEL_TEXT = '📂 Child Pages'
 
-export interface ChildSummary {
-  id: string
-  title: string
-}
-
-/**
- * The footer block array: a sentinel `heading_2` followed by one
- * `bulleted_list_item` page-mention per child. Empty when there are no
- * children — the caller then appends nothing (no orphan heading).
- */
-export const buildFooterBlocks = (children: ChildSummary[]): Record<string, unknown>[] => {
-  if (children.length === 0) return []
-  return [
-    { object: 'block', type: 'heading_2', heading_2: { rich_text: [{ type: 'text', text: { content: SENTINEL_TEXT } }] } },
-    ...children.map((c) => ({
-      object: 'block',
-      type: 'bulleted_list_item',
-      bulleted_list_item: { rich_text: [{ type: 'mention', mention: { type: 'page', page: { id: c.id } } }] }
-    }))
-  ]
-}
+/** The footer: a single "Child Pages" sentinel heading. */
+export const buildFooterBlocks = (): Record<string, unknown>[] => [{ object: 'block', type: 'heading_2', heading_2: { rich_text: [{ type: 'text', text: { content: SENTINEL_TEXT } }] } }]
 
 const blockText = (block: NotionBlock): string => {
   const rt = (block[block.type] as { rich_text?: Array<{ plain_text?: string }> } | undefined)?.rich_text
   return Array.isArray(rt) ? rt.map((t) => t.plain_text ?? '').join('') : ''
 }
 
-const isSentinel = (block: NotionBlock): boolean => block.type === 'heading_2' && blockText(block) === SENTINEL_TEXT
+const isSentinel = (block: NotionBlock): boolean => {
+  if (block.type !== 'heading_2') return false
+  const text = blockText(block)
+  return text === SENTINEL_TEXT || text === LEGACY_SENTINEL_TEXT
+}
 
 const doRefresh = async (parentPageId: string): Promise<void> => {
   const blocks = await getBlockChildren(parentPageId)
-  const children: ChildSummary[] = blocks.filter((b) => b.type === 'child_page').map((b) => ({ id: b.id, title: b.child_page?.title ?? '' }))
+  const hasChildren = blocks.some((b) => b.type === 'child_page')
 
-  // Drop the existing footer: the sentinel and every following block that is
-  // NOT a child page. (Notion appends new child_page blocks after the footer,
-  // so a blind "delete from sentinel onwards" would archive real sub-pages.)
+  // Remove the existing footer: the sentinel heading and any following blocks
+  // that are NOT child pages (legacy mention bullets). Child pages are spared —
+  // they are real sub-pages and Notion appends new ones after the footer.
   const sentinelIdx = blocks.findIndex(isSentinel)
+  const deleted = new Set<string>()
   if (sentinelIdx !== -1) {
     for (const block of blocks.slice(sentinelIdx)) {
-      if (block.type !== 'child_page') await deleteBlock(block.id)
+      if (block.type !== 'child_page') {
+        await deleteBlock(block.id)
+        deleted.add(block.id)
+      }
     }
   }
 
-  const footer = buildFooterBlocks(children)
-  if (footer.length > 0) await appendBlockChildren(parentPageId, footer)
+  if (!hasChildren) return // no children → no heading (don't leave an orphan)
+
+  // Insert one heading immediately before the first child page so it heads the
+  // native child links. `after` anchors it to the block just before that child
+  // (undefined when a child page is the very first block → heading goes last).
+  let anchorId: string | undefined
+  let prevId: string | undefined
+  for (const block of blocks) {
+    if (deleted.has(block.id)) continue
+    if (block.type === 'child_page') {
+      anchorId = prevId
+      break
+    }
+    prevId = block.id
+  }
+  await appendBlockChildren(parentPageId, buildFooterBlocks(), anchorId)
 }
 
 const footerLocks = new Map<string, Promise<unknown>>()
 
 /**
- * Regenerate a parent page's child-pages footer from its current Notion-side
+ * Regenerate a parent page's "Child Pages" heading from its current Notion-side
  * children. Idempotent and serialised per parent id so concurrent calls for the
  * same parent run one-at-a-time. The returned promise rejects if THIS refresh
  * fails; the per-parent chain continues regardless.

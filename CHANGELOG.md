@@ -8,8 +8,8 @@
   - `icon` — `{ type: "emoji", emoji }` or `{ type: "external", external: { url } }`, set in the page-create call.
   - `full_width` (default `true`) — sets `format.page_full_width` on create; if Notion rejects the hint, the create is retried once without it (default width) and a warning is logged.
   - `link_map` — wikilink target → mirror URL. Resolved `[[…]]` become Notion page mentions; unresolved ones render as italic text. The caller builds the map (the MCP never walks the KB).
-- **Child-pages footer (mirror-only).** Page-parented mirror pages get a "📂 Child Pages" footer of page-mention bullets, refreshed automatically after `publish` (page parent), real `unpublish` (page parent), and `move` (both old and new page parents). Identified by a sentinel `heading_2` (`📂 Child Pages`) — a future mirror→KB reader must strip it. Refreshes are serialised per parent and never fail the primary operation.
-- New modules: `src/wikilinks.ts` (pure rewrite + mention conversion), `src/footer.ts` (`buildFooterBlocks` + locked `refreshFooter`). New `notion-client` block helpers: `getBlockChildren` (paginated), `appendBlockChildren`, `deleteBlock`.
+- **Child-pages footer (mirror-only).** Page-parented mirror pages get a single `Child Pages` `heading_2` placed immediately above Notion's native `child_page` links (no duplicate mention bullets, no folder emoji). Refreshed automatically after `publish` (page parent), real `unpublish` (page parent), and `move` (both old and new page parents); a refresh also cleans up legacy `📂 Child Pages` heading + bullets. Identified by a sentinel `heading_2` (`Child Pages`) — a future mirror→KB reader must strip it. Refreshes are serialised per parent and never fail the primary operation.
+- New modules: `src/wikilinks.ts` (pure rewrite + mention conversion), `src/footer.ts` (`buildFooterBlocks` + locked `refreshFooter`). New `notion-client` block helpers: `getBlockChildren` (paginated), `appendBlockChildren` (with optional `after` anchor), `deleteBlock`.
 
 ## 1.0.0
 

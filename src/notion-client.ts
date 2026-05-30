@@ -258,9 +258,10 @@ export const getBlockChildren = async (blockId: string): Promise<NotionBlock[]> 
   return all
 }
 
-/** Append children to a block/page. */
-export const appendBlockChildren = async (blockId: string, children: unknown[]): Promise<void> => {
-  await request('PATCH', `/v1/blocks/${normalizeId(blockId)}/children`, { children })
+/** Append children to a block/page. Pass `after` (a sibling block id) to position the new blocks right after it instead of at the end. */
+export const appendBlockChildren = async (blockId: string, children: unknown[], after?: string): Promise<void> => {
+  const body = after === undefined ? { children } : { children, after: normalizeId(after) }
+  await request('PATCH', `/v1/blocks/${normalizeId(blockId)}/children`, body)
 }
 
 /** Delete (archive) a single block. */

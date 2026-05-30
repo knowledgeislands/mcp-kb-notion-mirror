@@ -31,7 +31,7 @@ link_map?: Record<string, string>   // wikilink target → notion page URL
 For each `[[target]]` or `[[target|display]]` in the body markdown, the MCP:
 
 - If `target` is a key in `link_map` → emit a Notion **page mention** rich-text element pointing at the corresponding page id (extracted from the URL). Use `display` if provided, otherwise the target's basename.
-- If `target` is not in the map → emit *italic* plain text (`*target*`), so unresolved KB references are visible-but-not-clickable.
+- If `target` is not in the map → emit _italic_ plain text (`*target*`), so unresolved KB references are visible-but-not-clickable.
 
 The mention's page id is extracted from the URL by the same 32-hex regex used elsewhere.
 

@@ -74,15 +74,15 @@ The MCP does **not** build the map — it doesn't walk the KB. The orchestrator 
 
 ## Child-pages footer
 
-Every page-parented mirror page gets a **"📂 Child Pages"** footer listing its immediate child pages as Notion `@`mentions. It's how a parent's body surfaces its children (the wiki sidebar shows the tree; the page body doesn't otherwise). Footer maintenance is automatic — there is no separate tool:
+Notion already renders a parent's children inline as native, clickable `child_page` blocks. So the footer doesn't duplicate them as a list — it's just a single **"Child Pages"** `heading_2` placed immediately **above** those native child links, to label the section. Footer maintenance is automatic — there is no separate tool:
 
-- after `publish` under a `page_id` parent → that parent's footer is refreshed;
-- after a real `unpublish` of a page-parented child → that parent's footer is refreshed;
-- after `move` → both the old and new page parents' footers are refreshed.
+- after `publish` under a `page_id` parent → that parent's heading is refreshed;
+- after a real `unpublish` of a page-parented child → that parent's heading is refreshed;
+- after `move` → both the old and new page parents' headings are refreshed.
 
-Database parents need no footer (their views already list rows). Footer refreshes are serialised per parent and never fail the primary operation (a footer error is logged and swallowed).
+A refresh removes any prior heading (and legacy `📂 Child Pages` footer bullets from earlier versions), then — if the page has any child pages — inserts one heading right before the first child-page block. New children Notion appends at the end fall under it. Database parents need no heading (their views already list rows). Refreshes are serialised per parent and never fail the primary operation (a footer error is logged and swallowed).
 
-> **Mirror-only / sentinel.** The footer is **never** written into the KB source. It begins with a sentinel `heading_2` whose text is exactly `📂 Child Pages`. Any future "read the mirror back into the KB" path **must** recognise this sentinel and strip it (and everything Notion lists under it as footer bullets) before importing.
+> **Mirror-only / sentinel.** The heading is **never** written into the KB source. Its text is exactly `Child Pages` (a `heading_2`). Any future "read the mirror back into the KB" path **must** recognise this sentinel heading and strip it before importing.
 
 ## Orchestrator example
 

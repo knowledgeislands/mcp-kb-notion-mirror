@@ -200,6 +200,13 @@ describe('notion-client (mcp-notion-mirror)', () => {
       expect(JSON.parse(init.body)).toEqual({ children: [{ type: 'heading_2' }] })
     })
 
+    it('appendBlockChildren positions the payload after a sibling when `after` is given (id normalized)', async () => {
+      fetchMock.mockResolvedValueOnce(ok({}))
+      const { appendBlockChildren } = await import('./notion-client.js')
+      await appendBlockChildren(PAGE_HEX, [{ type: 'heading_2' }], PAGE_DASHED)
+      expect(JSON.parse(fetchMock.mock.calls[0]?.[1].body)).toEqual({ children: [{ type: 'heading_2' }], after: PAGE_HEX })
+    })
+
     it('deleteBlock issues a DELETE', async () => {
       fetchMock.mockResolvedValueOnce(ok({}))
       const { deleteBlock } = await import('./notion-client.js')
