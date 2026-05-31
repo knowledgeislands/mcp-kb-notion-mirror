@@ -89,7 +89,7 @@
     "clean": "rm -rf {dist,node_modules}",
     "deps:missing": "bunx depcheck --json | bunx node-jq --sort-keys '.' | bunx node-jq '.missing | keys | .[]' | xargs bun add -D",
     "deps:unused": "bunx depcheck --json | bunx node-jq --sort-keys '.' | bunx node-jq '.devDependencies[]' | xargs bun remove",
-    "deps:update": "bun update",
+    "deps:update": "bun update --latest",
     "lint:check": "bunx @biomejs/biome check",
     "lint:fix": "bunx @biomejs/biome check --write --unsafe",
     "lint:format": "bunx @biomejs/biome format --write",
