@@ -58,18 +58,27 @@ const toMention = (item: RichTextItem): RichTextItem => {
   return item
 }
 
+/** Convert every `mention:` placeholder in one rich-text array to a real mention. */
+const mentionsIn = (richText: unknown[]): RichTextItem[] => richText.map((item) => toMention(item as RichTextItem))
+
 /**
  * Walk a martian block tree and turn every `mention:` placeholder link into a
  * Notion page-mention rich-text object. Generic over martian's nesting: it
  * transforms any `rich_text` array it finds at any depth and recurses
  * everywhere else. Pure — returns a new tree, mutates nothing.
+ *
+ * Table cells are the one exception to "rich text lives under `rich_text`":
+ * a `table_row` carries its cells under `cells` as an array OF rich-text arrays,
+ * so the generic walk would never reach them — hence the explicit `cells` case.
  */
 export const convertMentionPlaceholders = (node: unknown): unknown => {
   if (Array.isArray(node)) return node.map(convertMentionPlaceholders)
   if (node && typeof node === 'object') {
     const out: Record<string, unknown> = {}
     for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
-      out[key] = key === 'rich_text' && Array.isArray(value) ? value.map((item) => toMention(item as RichTextItem)) : convertMentionPlaceholders(value)
+      if (key === 'rich_text' && Array.isArray(value)) out[key] = mentionsIn(value)
+      else if (key === 'cells' && Array.isArray(value)) out[key] = value.map((cell) => mentionsIn(cell as unknown[]))
+      else out[key] = convertMentionPlaceholders(value)
     }
     return out
   }
