@@ -10,7 +10,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { type Config, DEFAULT_BANNER_TEMPLATE } from '../../config/index.js'
-import { deleteNote, getNote, moveNote, preflightNote, statusNote, touchNote, updateNote } from './index.js'
+import { baselineNote, deleteNote, getNote, moveNote, preflightNote, statusNote, touchNote, updateNote } from './index.js'
 import { _clearTitlePropertyCache } from './title-property.js'
 
 const DB_ID = '36f9f7187cc280f69272e60aa89bff24'
@@ -253,6 +253,65 @@ describe('note verbs', () => {
       const abs = await writeNote('note.md', FM('\nkb_notion_mirror_url: https://www.notion.so/no-id'))
       await expect(updateNote(cfg, abs, { type: 'page_id', page_id: PAGE_HEX })).rejects.toThrow(/Could not extract a 32-hex page id/)
     })
+
+    it('skips with zero Notion calls when the stored hash matches the rendered body', async () => {
+      const abs = await writeNote('My Note.md', FM(`\nkb_notion_mirror_url: ${MIRROR_URL}`))
+      routeUpdate([{ id: OLD_BODY, type: 'paragraph' }])
+      const first = await updateNote(cfg, abs, { type: 'database_id', database_id: DB_ID })
+      const hash = (first as { hash: string }).hash
+      expect(hash).toMatch(/^[a-f0-9]{64}$/)
+      fetchMock.mockClear()
+      const second = await updateNote(cfg, abs, { type: 'database_id', database_id: DB_ID })
+      expect(second).toEqual({ skipped: true, url: MIRROR_URL, page_id: PAGE_HEX, hash })
+      expect(fetchMock).not.toHaveBeenCalled()
+    })
+
+    it('force re-pushes even when the hash is unchanged', async () => {
+      const abs = await writeNote('My Note.md', FM(`\nkb_notion_mirror_url: ${MIRROR_URL}`))
+      routeUpdate([{ id: OLD_BODY, type: 'paragraph' }])
+      await updateNote(cfg, abs, { type: 'database_id', database_id: DB_ID })
+      fetchMock.mockClear()
+      const forced = await updateNote(cfg, abs, { type: 'database_id', database_id: DB_ID }, { force: true })
+      expect('skipped' in forced).toBe(false)
+      expect(fetchMock.mock.calls.some((c) => /\/v1\/pages\/[a-f0-9]+$/.test(String(c[0])) && c[1].method === 'PATCH')).toBe(true)
+    })
+  })
+
+  describe('baselineNote', () => {
+    it('stamps hash + published_at with no Notion call, and the next update then skips', async () => {
+      const abs = await writeNote('My Note.md', FM(`\nkb_notion_mirror_url: ${MIRROR_URL}`))
+      const res = await baselineNote(cfg, abs, { type: 'database_id', database_id: DB_ID }, { publishedAt: '2026-06-01T18:00:00Z' })
+      expect(res).toMatchObject({ baselined: true, url: MIRROR_URL, published_at: '2026-06-01T18:00:00Z' })
+      expect((res as { hash: string }).hash).toMatch(/^[a-f0-9]{64}$/)
+      expect(fetchMock).not.toHaveBeenCalled()
+      const written = await fsp.readFile(abs, 'utf-8')
+      expect(written).toContain(`kb_notion_mirror_hash: ${(res as { hash: string }).hash}`)
+      expect(written).toContain('kb_notion_mirror_published_at: 2026-06-01T18:00:00Z')
+      // The baseline hash must match what updateNote computes, so a publish now skips.
+      const upd = await updateNote(cfg, abs, { type: 'database_id', database_id: DB_ID })
+      expect('skipped' in upd).toBe(true)
+      expect(fetchMock).not.toHaveBeenCalled()
+    })
+
+    it('defaults published_at to a millisecond-stripped now when none is given', async () => {
+      const abs = await writeNote('My Note.md', FM(`\nkb_notion_mirror_url: ${MIRROR_URL}`))
+      const res = await baselineNote(cfg, abs, { type: 'database_id', database_id: DB_ID })
+      expect((res as { published_at: string }).published_at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/)
+    })
+
+    it('leaves an unmirrored note untouched (no url → nothing to baseline)', async () => {
+      const abs = await writeNote('My Note.md', FM())
+      const before = await fsp.readFile(abs, 'utf-8')
+      const res = await baselineNote(cfg, abs, { type: 'database_id', database_id: DB_ID }, { publishedAt: '2026-06-01T18:00:00Z' })
+      expect(res).toEqual({ skipped: true, reason: 'not-mirrored' })
+      expect(await fsp.readFile(abs, 'utf-8')).toBe(before)
+      expect(fetchMock).not.toHaveBeenCalled()
+    })
+
+    it('throws when the note has no frontmatter', async () => {
+      const abs = await writeNote('note.md', '# x\n\nbody\n')
+      await expect(baselineNote(cfg, abs, { type: 'database_id', database_id: DB_ID }, { publishedAt: 'x' })).rejects.toThrow(/no YAML frontmatter/)
+    })
   })
 
   describe('deleteNote', () => {
@@ -260,7 +319,12 @@ describe('note verbs', () => {
       const content = FM(`\nkb_notion_mirror_url: ${MIRROR_URL}`)
       const abs = await writeNote('note.md', content)
       const result = await deleteNote(cfg, abs, true)
-      expect(result).toEqual({ dry_run: true, would_archive_url: MIRROR_URL, would_archive_page_id: PAGE_HEX, would_clear_fields: ['kb_notion_mirror_url', 'kb_notion_mirror_published_at'] })
+      expect(result).toEqual({
+        dry_run: true,
+        would_archive_url: MIRROR_URL,
+        would_archive_page_id: PAGE_HEX,
+        would_clear_fields: ['kb_notion_mirror_url', 'kb_notion_mirror_published_at', 'kb_notion_mirror_hash']
+      })
       expect(fetchMock).not.toHaveBeenCalled()
       expect(await fsp.readFile(abs, 'utf-8')).toBe(content)
     })

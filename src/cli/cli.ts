@@ -20,6 +20,7 @@
 import { loadConfig } from '../config/index.js'
 import type { NotionParent } from '../main/notion-client/index.js'
 import {
+  baselineTree,
   buildLinkMap,
   deleteNote,
   deleteTree,
@@ -54,14 +55,16 @@ tryLoadEnvFile('.env')
 const USAGE = `Usage: mcp-kb-notion-mirror-publish <resource> <verb> [args] [flags]
 
 note  <verb> <kbPath>   verbs: get | status | preflight | touch | update | move | delete
-tree  <verb> <subtree>  verbs: status | preflight | touch | update | delete | prune
-roots <verb>            verbs: list | touch | update | publish | delete | prune
+tree  <verb> <subtree>  verbs: status | preflight | touch | update | delete | prune | baseline
+roots <verb>            verbs: list | touch | update | publish | delete | prune | baseline
 
 Flags:
   --parent-db <id>    Notion wiki database parent (note/tree touch|update, note move)
   --parent-page <id>  Notion page parent (same verbs)
   --note <kbPath>     restrict a tree op to one note's ancestor chain
   --dry-run           delete/prune only: report what would be archived without touching Notion
+  --force             update only: push every note even when its content hash is unchanged
+  --skip <kbPath>     baseline only: leave this note unstamped (repeatable)
 
 Env:
   MCP_KB_NOTION_MIRROR_TOKEN          required for Notion calls — integration secret
@@ -94,7 +97,17 @@ const requireKbRoot = (): string => {
   return kbRoot
 }
 
-const ACTION_GLYPH: Record<string, string> = { touch: '+', update: '~', delete: '✗', skip: '↻', plan: '·', error: '✗' }
+const ACTION_GLYPH: Record<string, string> = { touch: '+', update: '~', delete: '✗', skip: '↻', plan: '·', baseline: '=', error: '✗' }
+
+/** All values following each occurrence of `name` in argv (for repeatable value flags like --skip). */
+const flagValues = (argv: string[], name: string): string[] => {
+  const out: string[] = []
+  for (let i = 0; i < argv.length; i++) if (argv[i] === name && argv[i + 1] !== undefined) out.push(argv[i + 1] as string)
+  return out
+}
+
+/** Current time as a millisecond-stripped ISO stamp, used as the single baseline `published_at`. */
+const nowStamp = (): string => new Date().toISOString().replace(/\.\d{3}Z$/, 'Z')
 
 const printOutcomes = (outcomes: { kbPath: string; action: string; url?: string; error?: string }[]): void => {
   for (const o of outcomes) {
@@ -152,11 +165,13 @@ const runTree = async (verb: string, subtree: string, argv: string[], dryRun: bo
     case 'touch':
       return printOutcomes((await touchTree(cfg, subtree, parentFromFlags(argv), s, note)).outcomes)
     case 'update':
-      return printOutcomes((await updateTree(cfg, subtree, parentFromFlags(argv), s, { kbPath: note })).outcomes)
+      return printOutcomes((await updateTree(cfg, subtree, parentFromFlags(argv), s, { kbPath: note, force: argv.includes('--force') })).outcomes)
     case 'delete':
       return printOutcomes((await deleteTree(cfg, subtree, s, { kbPath: note, dryRun })).outcomes)
     case 'prune':
       return printOutcomes((await pruneTree(cfg, subtree, s, { dryRun })).outcomes)
+    case 'baseline':
+      return printOutcomes((await baselineTree(cfg, subtree, parentFromFlags(argv), s, { kbPath: note, publishedAt: nowStamp(), skip: new Set(flagValues(argv, '--skip')) })).outcomes)
     default:
       console.error(`Unknown tree verb: ${verb}\n\n${USAGE}`)
       process.exit(2)
@@ -164,7 +179,7 @@ const runTree = async (verb: string, subtree: string, argv: string[], dryRun: bo
 }
 
 // ── roots (batch over every declared root) ────────────────────────────────────
-const runRoots = async (verb: string, dryRun: boolean): Promise<void> => {
+const runRoots = async (verb: string, argv: string[], dryRun: boolean): Promise<void> => {
   const s = loadMirrorSettings(process.env)
   if (verb === 'list') {
     return json(listRoots(requireKbRoot(), s))
@@ -190,7 +205,17 @@ const runRoots = async (verb: string, dryRun: boolean): Promise<void> => {
     const linkMap = globalLinkMap() // one map across ALL roots → cross-root wikilinks resolve
     for (const r of roots) {
       console.log(`\n########## update ${r.subtree} ##########`)
-      printOutcomes((await updateTree(cfg, r.subtree, r.parent, s, { linkMap })).outcomes)
+      printOutcomes((await updateTree(cfg, r.subtree, r.parent, s, { linkMap, force: argv.includes('--force') })).outcomes)
+    }
+  }
+  if (verb === 'baseline') {
+    // Stamp every root with ONE shared timestamp so the whole baseline shares a clock.
+    const linkMap = globalLinkMap()
+    const publishedAt = nowStamp()
+    const skip = new Set(flagValues(argv, '--skip'))
+    for (const r of roots) {
+      console.log(`\n########## baseline ${r.subtree} ##########`)
+      printOutcomes((await baselineTree(cfg, r.subtree, r.parent, s, { linkMap, publishedAt, skip })).outcomes)
     }
   }
   if (verb === 'delete') {
@@ -199,7 +224,7 @@ const runRoots = async (verb: string, dryRun: boolean): Promise<void> => {
       printOutcomes((await deleteTree(cfg, r.subtree, s, { dryRun })).outcomes)
     }
   }
-  if (!['touch', 'update', 'publish', 'delete'].includes(verb)) {
+  if (!['touch', 'update', 'publish', 'delete', 'baseline'].includes(verb)) {
     console.error(`Unknown roots verb: ${verb}\n\n${USAGE}`)
     process.exit(2)
   }
@@ -208,7 +233,7 @@ const runRoots = async (verb: string, dryRun: boolean): Promise<void> => {
 const main = async (): Promise<void> => {
   const argv = process.argv.slice(2)
   const dryRun = argv.includes('--dry-run')
-  const valueFlags = new Set(['--parent-db', '--parent-page', '--note'])
+  const valueFlags = new Set(['--parent-db', '--parent-page', '--note', '--skip'])
   const positional: string[] = []
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i] as string
@@ -231,7 +256,7 @@ const main = async (): Promise<void> => {
 
   if (resource === 'note') return runNote(verb, target as string, argv, dryRun)
   if (resource === 'tree') return runTree(verb, target as string, argv, dryRun)
-  if (resource === 'roots') return runRoots(verb, dryRun)
+  if (resource === 'roots') return runRoots(verb, argv, dryRun)
   console.error(`Unknown resource: ${resource}\n\n${USAGE}`)
   process.exit(2)
 }

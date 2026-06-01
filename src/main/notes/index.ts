@@ -6,8 +6,8 @@
  * every branch unit-testable against a real temp file + a mocked Notion `fetch`.
  *
  * The note layer is file-aware but layout-agnostic: it reads the note's
- * frontmatter (+ body, for `update`) and writes back ONLY `kb_notion_mirror_url`
- * / `kb_notion_mirror_published_at`. It does not discover files, resolve parents,
+ * frontmatter (+ body, for `update`) and writes back ONLY the mirror-owned
+ * fields (`MIRROR_FIELDS`: url / published_at / hash). It does not discover files, resolve parents,
  * or know any folder convention — the caller supplies `kb_path` and (for
  * mutations) the Notion `parent`.
  *
@@ -37,13 +37,19 @@ import {
 import { bannerBlock } from './banner.js'
 import { refreshFooter } from './footer.js'
 import { removeFrontmatterFields, upsertFrontmatterFields } from './frontmatter.js'
+import { computeBodyHash } from './hash.js'
 import { bodyToBlocks, titleFromPath } from './markdown.js'
 import { readFullNote, readNoteFrontmatter } from './read.js'
 import { getDatabaseTitleProperty } from './title-property.js'
 import { convertMentionPlaceholders, rewriteWikilinks } from './wikilinks.js'
 
-/** The two frontmatter fields the mirror owns. `published_at` records the last mirror time (set at touch). */
-export const MIRROR_FIELDS = ['kb_notion_mirror_url', 'kb_notion_mirror_published_at'] as const
+/**
+ * The frontmatter fields the mirror owns:
+ *  - `url`          — the page identity (stable across moves); the link target.
+ *  - `published_at` — the last mirror time, for remote-drift detection (`--verify`).
+ *  - `hash`         — content hash of the last push, for the zero-call skip in `updateNote`.
+ */
+export const MIRROR_FIELDS = ['kb_notion_mirror_url', 'kb_notion_mirror_published_at', 'kb_notion_mirror_hash'] as const
 const MAX_CHILDREN_PER_REQUEST = 100
 
 /** Optional touch extras: page icon. */
@@ -51,15 +57,27 @@ export interface TouchOptions {
   icon?: NotionIcon
 }
 
-/** Optional update extras: page icon, wikilink resolution map. */
+/** Optional update extras: page icon, wikilink resolution map, force (bypass the hash skip). */
 export interface UpdateOptions {
   icon?: NotionIcon
   linkMap?: Record<string, string>
+  /** Push even when the content hash is unchanged (used by `--force` and drift reconcile). */
+  force?: boolean
+}
+
+/** Optional baseline extras: page icon, wikilink resolution map, and the timestamp to stamp. */
+export interface BaselineOptions {
+  icon?: NotionIcon
+  linkMap?: Record<string, string>
+  /** The `published_at` value to stamp (a single "now" across the run); defaults to the current time. */
+  publishedAt?: string
 }
 
 export type TouchResult = { url: string; page_id: string; published_at: string } | { skipped: true; existing_url: string }
 
-export type UpdateResult = { url: string; page_id: string; updated_at: string }
+export type UpdateResult = { url: string; page_id: string; updated_at: string; hash: string } | { skipped: true; url: string; page_id: string; hash: string }
+
+export type BaselineResult = { baselined: true; url: string; hash: string; published_at: string } | { skipped: true; reason: 'not-mirrored' }
 
 export type DeleteResult =
   | { archived: true; page_id: string; url: string }
@@ -166,6 +184,13 @@ export const updateNote = async (cfg: Config, kbPath: string, parent: NotionPare
   // martian carried through into real page mentions.
   const rewritten = rewriteWikilinks(body, options.linkMap ?? {})
   const bodyBlocks = convertMentionPlaceholders(bodyToBlocks(rewritten)) as unknown[]
+
+  // Zero-call skip: if nothing that determines the push (body, title, icon,
+  // parent) has changed since the last mirror, don't touch Notion at all.
+  // `force` bypasses this (manual --force, or a drift reconcile).
+  const hash = computeBodyHash({ blocks: bodyBlocks, title, icon: options.icon, parent })
+  if (!options.force && fields.kb_notion_mirror_hash === hash) return { skipped: true, url: existing, page_id: pageId, hash }
+
   const banner = bannerBlock(cfg.bannerTemplate, new Date().toISOString().slice(0, 10))
   const children = banner ? [banner, ...bodyBlocks] : bodyBlocks
 
@@ -173,7 +198,7 @@ export const updateNote = async (cfg: Config, kbPath: string, parent: NotionPare
   // Read parent before updatePage so we can detect the page_id ↔ database_id
   // silent-failure case Notion exhibits on cross-type re-parents.
   const before = await getPage(cfg, pageId)
-  const page = await updatePage(cfg, pageId, { parent, title, titleProperty, icon: options.icon })
+  await updatePage(cfg, pageId, { parent, title, titleProperty, icon: options.icon })
   if (before.parent.type !== parent.type) {
     const after = await getPage(cfg, pageId)
     if (JSON.stringify(after.parent) === JSON.stringify(before.parent)) {
@@ -181,8 +206,6 @@ export const updateNote = async (cfg: Config, kbPath: string, parent: NotionPare
     }
   }
   await replaceBody(cfg, pageId, children)
-  const updatedAt = normalizePublishedAt(page.last_edited_time)
-  await atomicWriteFile(abs, upsertFrontmatterFields(raw, { kb_notion_mirror_published_at: updatedAt }))
   // Body replace cleared this page's footer heading; regenerate it. Refresh the
   // OLD parent's footer if we just re-parented away from a page parent, and the
   // new parent's footer if the new parent is a page.
@@ -190,7 +213,35 @@ export const updateNote = async (cfg: Config, kbPath: string, parent: NotionPare
   const oldParentId = pageParentId(before.parent)
   if (oldParentId && oldParentId !== (parent.type === 'page_id' ? parent.page_id : undefined)) await refreshFooterSafe(cfg, oldParentId)
   if (parent.type === 'page_id') await refreshFooterSafe(cfg, parent.page_id)
-  return { url: existing, page_id: pageId, updated_at: updatedAt }
+  // Stamp `published_at` from a FINAL read — after the body + footer writes — so
+  // it is >= the page's true last edit; otherwise every page would later look
+  // drifted to `--verify`. Stamp the content `hash` so the next run can skip.
+  const updatedAt = normalizePublishedAt((await getPage(cfg, pageId)).last_edited_time)
+  await atomicWriteFile(abs, upsertFrontmatterFields(raw, { kb_notion_mirror_hash: hash, kb_notion_mirror_published_at: updatedAt }))
+  return { url: existing, page_id: pageId, updated_at: updatedAt, hash }
+}
+
+/**
+ * Baseline a note WITHOUT any Notion call: render the body exactly as `updateNote`
+ * would, compute the content hash, and stamp `kb_notion_mirror_hash` +
+ * `kb_notion_mirror_published_at`. Valid only when Notion is known to already
+ * reflect the note (e.g. straight after a full publish) — it asserts "this is the
+ * synced state" so subsequent publishes skip it. Unmirrored notes are left alone.
+ */
+export const baselineNote = async (cfg: Config, kbPath: string, parent: NotionParent, options: BaselineOptions = {}): Promise<BaselineResult> => {
+  const { abs, raw, fields, hasFrontmatter, body } = await readFullNote(cfg, kbPath)
+  if (!hasFrontmatter) throw new Error('Note has no YAML frontmatter; refusing to mirror.')
+
+  const existing = fields.kb_notion_mirror_url
+  if (!existing) return { skipped: true, reason: 'not-mirrored' }
+
+  const title = titleFromPath(abs)
+  const rewritten = rewriteWikilinks(body, options.linkMap ?? {})
+  const bodyBlocks = convertMentionPlaceholders(bodyToBlocks(rewritten)) as unknown[]
+  const hash = computeBodyHash({ blocks: bodyBlocks, title, icon: options.icon, parent })
+  const publishedAt = options.publishedAt ?? normalizePublishedAt(new Date().toISOString())
+  await atomicWriteFile(abs, upsertFrontmatterFields(raw, { kb_notion_mirror_hash: hash, kb_notion_mirror_published_at: publishedAt }))
+  return { baselined: true, url: existing, hash, published_at: publishedAt }
 }
 
 /** Delete the note's mirror page (archive it) and clear the two mirror fields. Dry-run by default. */

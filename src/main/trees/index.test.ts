@@ -15,7 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { type Config, DEFAULT_BANNER_TEMPLATE } from '../../config/index.js'
 import { _clearTitlePropertyCache } from '../notes/title-property.js'
 import type { NotionParent } from '../notion-client/index.js'
-import { deleteTree, preflightTree, publishTreeNote, statusTree, touchTree, updateTree } from './index.js'
+import { baselineTree, deleteTree, preflightTree, publishTreeNote, statusTree, touchTree, updateTree } from './index.js'
 import type { MirrorSettings } from './settings.js'
 
 const DB_ID = '36f9f7187cc280f69272e60aa89bff24'
@@ -248,6 +248,82 @@ describe('tree verbs', () => {
       const res = await updateTree(cfg, SUBTREE, ROOT_PARENT, s)
       expect(res.outcomes[0]).toMatchObject({ action: 'error' })
       expect(res.outcomes[0]?.error).toMatch(/Could not extract a 32-hex page id/)
+    })
+
+    it('maps an unchanged note (hash match) to skip on the next run, with no Notion call', async () => {
+      await write('Alpha/Alpha.md', fm({}))
+      await write('Alpha/Leaf.md', fm({}))
+      routeHappy()
+      await touchTree(cfg, SUBTREE, ROOT_PARENT, s)
+      await updateTree(cfg, SUBTREE, ROOT_PARENT, s) // first push stamps the hash
+      fetchMock.mockClear()
+      const res = await updateTree(cfg, SUBTREE, ROOT_PARENT, s)
+      expect(res.outcomes.map((o) => o.action)).toEqual(['skip', 'skip'])
+      expect(fetchMock).not.toHaveBeenCalled()
+    })
+
+    it('force re-pushes unchanged notes (no skip)', async () => {
+      await write('Alpha/Alpha.md', fm({}))
+      routeHappy()
+      await touchTree(cfg, SUBTREE, ROOT_PARENT, s)
+      await updateTree(cfg, SUBTREE, ROOT_PARENT, s)
+      fetchMock.mockClear()
+      const res = await updateTree(cfg, SUBTREE, ROOT_PARENT, s, { force: true })
+      expect(res.outcomes.map((o) => o.action)).toEqual(['update'])
+      expect(fetchMock).toHaveBeenCalled()
+    })
+  })
+
+  describe('baselineTree', () => {
+    const HEX_A = 'a'.repeat(32)
+    const HEX_B = 'b'.repeat(32)
+
+    it('stamps hash + published_at without any Notion call, and a later update then skips both', async () => {
+      await write('Alpha/Alpha.md', fm({ kb_notion_mirror_url: `https://www.notion.so/A-${HEX_A}` }))
+      await write('Alpha/Leaf.md', fm({ kb_notion_mirror_url: `https://www.notion.so/L-${HEX_B}` }))
+      const res = await baselineTree(cfg, SUBTREE, ROOT_PARENT, s, { publishedAt: '2026-06-01T18:00:00Z' })
+      expect(res.outcomes.map((o) => o.action)).toEqual(['baseline', 'baseline'])
+      expect(fetchMock).not.toHaveBeenCalled()
+      const alpha = await read('Alpha/Alpha.md')
+      expect(alpha).toContain('kb_notion_mirror_published_at: 2026-06-01T18:00:00Z')
+      expect(alpha).toMatch(/kb_notion_mirror_hash: [a-f0-9]{64}/)
+      // Baseline hash equals what update computes → a subsequent publish skips.
+      const upd = await updateTree(cfg, SUBTREE, ROOT_PARENT, s)
+      expect(upd.outcomes.map((o) => o.action)).toEqual(['skip', 'skip'])
+      expect(fetchMock).not.toHaveBeenCalled()
+    })
+
+    it('leaves a skip-listed note unstamped', async () => {
+      await write('Alpha/Alpha.md', fm({ kb_notion_mirror_url: `https://www.notion.so/A-${HEX_A}` }))
+      const before = await read('Alpha/Alpha.md')
+      const res = await baselineTree(cfg, SUBTREE, ROOT_PARENT, s, { publishedAt: '2026-06-01T18:00:00Z', skip: new Set(['Alpha/Alpha.md']) })
+      expect(res.outcomes[0]).toMatchObject({ action: 'skip', error: 'excluded from baseline' })
+      expect(await read('Alpha/Alpha.md')).toBe(before)
+      expect(fetchMock).not.toHaveBeenCalled()
+    })
+
+    it('skips an unmirrored note (no url to baseline)', async () => {
+      await write('Alpha/Alpha.md', fm({}))
+      const res = await baselineTree(cfg, SUBTREE, ROOT_PARENT, s, { publishedAt: '2026-06-01T18:00:00Z' })
+      expect(res.outcomes[0]).toMatchObject({ action: 'skip' })
+      expect(res.outcomes[0]?.url).toBeUndefined()
+    })
+
+    it('records an error when a parent index is unresolvable', async () => {
+      await write('Alpha/Alpha.md', fm({}))
+      await write('Alpha/Beta/Beta.md', fm({}))
+      await write('Alpha/Beta/Gamma.md', fm({ kb_notion_mirror_url: `https://www.notion.so/G-${HEX_A}` }))
+      const res = await baselineTree(cfg, SUBTREE, ROOT_PARENT, s, { publishedAt: '2026-06-01T18:00:00Z' })
+      const gamma = res.outcomes.find((o) => o.kbPath === 'Alpha/Beta/Gamma.md')
+      expect(gamma).toMatchObject({ action: 'error' })
+      expect(gamma?.error).toMatch(/required parent index not yet published/)
+    })
+
+    it('records an error when baselineNote throws (no frontmatter)', async () => {
+      await write('Alpha/Alpha.md', '# title\n\nbody.\n')
+      const res = await baselineTree(cfg, SUBTREE, ROOT_PARENT, s, { publishedAt: '2026-06-01T18:00:00Z' })
+      expect(res.outcomes[0]).toMatchObject({ action: 'error' })
+      expect(res.outcomes[0]?.error).toMatch(/no YAML frontmatter/)
     })
   })
 

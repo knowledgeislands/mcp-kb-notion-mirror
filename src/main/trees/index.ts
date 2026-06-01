@@ -17,7 +17,7 @@
 import { readFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import type { Config } from '../../config/index.js'
-import { deleteNote, touchNote, updateNote } from '../notes/index.js'
+import { baselineNote, deleteNote, touchNote, updateNote } from '../notes/index.js'
 import type { NotionParent } from '../notion-client/index.js'
 import { buildLinkMap, discover, iconFor, indexKbPathFor, type Note, publishOrder, readFrontmatter, resolveParent } from './discover.js'
 import type { MirrorSettings } from './settings.js'
@@ -25,7 +25,7 @@ import type { MirrorSettings } from './settings.js'
 /** The outcome of acting on a single note during a tree op. */
 export interface NoteOutcome {
   kbPath: string
-  action: 'touch' | 'update' | 'delete' | 'skip' | 'plan' | 'error'
+  action: 'touch' | 'update' | 'delete' | 'skip' | 'plan' | 'baseline' | 'error'
   url?: string
   error?: string
 }
@@ -154,7 +154,13 @@ export const touchTree = async (cfg: Config, subtree: string, parent: NotionPare
  * this subtree's notes; pass an explicit map for cross-root resolution). A note
  * that hasn't been touched is reported skipped, not created.
  */
-export const updateTree = async (cfg: Config, subtree: string, parent: NotionParent, s: MirrorSettings, opts: { kbPath?: string; linkMap?: Record<string, string> } = {}): Promise<TreeResult> => {
+export const updateTree = async (
+  cfg: Config,
+  subtree: string,
+  parent: NotionParent,
+  s: MirrorSettings,
+  opts: { kbPath?: string; linkMap?: Record<string, string>; force?: boolean } = {}
+): Promise<TreeResult> => {
   const kbRoot = requireRoot(cfg)
   const notes = notesFor(kbRoot, subtree, s, opts.kbPath)
   const linkMap = opts.linkMap ?? buildLinkMap(notes)
@@ -174,10 +180,54 @@ export const updateTree = async (cfg: Config, subtree: string, parent: NotionPar
       continue
     }
     try {
-      const res = await updateNote(cfg, n.kbPath, resolved, { icon: iconFor(n.fields.icon, s), linkMap })
-      outcomes.push({ kbPath: n.kbPath, action: 'update', url: res.url })
+      const res = await updateNote(cfg, n.kbPath, resolved, { icon: iconFor(n.fields.icon, s), linkMap, force: opts.force })
+      // `skipped` → content unchanged since last mirror, no Notion call made.
+      outcomes.push({ kbPath: n.kbPath, action: 'skipped' in res ? 'skip' : 'update', url: res.url })
     } catch (err) {
       // Best-effort — record the error but keep going so the rest of the tree still updates.
+      outcomes.push({ kbPath: n.kbPath, action: 'error', error: (err as Error).message })
+    }
+  }
+  return { eligible: notes.length, outcomes }
+}
+
+/**
+ * Baseline every mirrored note in the subtree (or one note's chain) WITHOUT any
+ * Notion call: render + hash each as `updateTree` would and stamp the mirror
+ * fields, so a subsequent publish skips them. Use straight after a full publish
+ * to record "this is the synced state". `skip` paths (e.g. notes whose last push
+ * failed) are left unstamped so the next publish still pushes them. A single
+ * `publishedAt` is stamped across the whole run.
+ */
+export const baselineTree = async (
+  cfg: Config,
+  subtree: string,
+  parent: NotionParent,
+  s: MirrorSettings,
+  opts: { kbPath?: string; linkMap?: Record<string, string>; publishedAt: string; skip?: Set<string> }
+): Promise<TreeResult> => {
+  const kbRoot = requireRoot(cfg)
+  const notes = notesFor(kbRoot, subtree, s, opts.kbPath)
+  const linkMap = opts.linkMap ?? buildLinkMap(notes)
+  const urlByKbPath = seedUrls(notes)
+  const outcomes: NoteOutcome[] = []
+  for (const n of notes) {
+    if (opts.skip?.has(n.kbPath)) {
+      outcomes.push({ kbPath: n.kbPath, action: 'skip', error: 'excluded from baseline' })
+      continue
+    }
+    let resolved: NotionParent
+    try {
+      resolved = resolveParent(n, subtree, parent, urlByKbPath)
+    } catch (err) {
+      outcomes.push({ kbPath: n.kbPath, action: 'error', error: (err as Error).message })
+      continue
+    }
+    try {
+      const res = await baselineNote(cfg, n.kbPath, resolved, { icon: iconFor(n.fields.icon, s), linkMap, publishedAt: opts.publishedAt })
+      // `skipped` → not mirrored yet (no URL), so there is nothing to baseline.
+      outcomes.push({ kbPath: n.kbPath, action: 'skipped' in res ? 'skip' : 'baseline', url: 'baselined' in res ? res.url : undefined })
+    } catch (err) {
       outcomes.push({ kbPath: n.kbPath, action: 'error', error: (err as Error).message })
     }
   }
