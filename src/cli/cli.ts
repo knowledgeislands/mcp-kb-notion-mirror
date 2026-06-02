@@ -64,6 +64,7 @@ Flags:
   --note <kbPath>     restrict a tree op to one note's ancestor chain
   --dry-run           delete/prune only: report what would be archived without touching Notion
   --force             update only: push every note even when its content hash is unchanged
+  --verify            update only: read each page's last-edit time and re-push any edited in Notion since last mirror
   --skip <kbPath>     baseline only: leave this note unstamped (repeatable)
 
 Env:
@@ -165,7 +166,7 @@ const runTree = async (verb: string, subtree: string, argv: string[], dryRun: bo
     case 'touch':
       return printOutcomes((await touchTree(cfg, subtree, parentFromFlags(argv), s, note)).outcomes)
     case 'update':
-      return printOutcomes((await updateTree(cfg, subtree, parentFromFlags(argv), s, { kbPath: note, force: argv.includes('--force') })).outcomes)
+      return printOutcomes((await updateTree(cfg, subtree, parentFromFlags(argv), s, { kbPath: note, force: argv.includes('--force'), verify: argv.includes('--verify') })).outcomes)
     case 'delete':
       return printOutcomes((await deleteTree(cfg, subtree, s, { kbPath: note, dryRun })).outcomes)
     case 'prune':
@@ -205,7 +206,7 @@ const runRoots = async (verb: string, argv: string[], dryRun: boolean): Promise<
     const linkMap = globalLinkMap() // one map across ALL roots → cross-root wikilinks resolve
     for (const r of roots) {
       console.log(`\n########## update ${r.subtree} ##########`)
-      printOutcomes((await updateTree(cfg, r.subtree, r.parent, s, { linkMap, force: argv.includes('--force') })).outcomes)
+      printOutcomes((await updateTree(cfg, r.subtree, r.parent, s, { linkMap, force: argv.includes('--force'), verify: argv.includes('--verify') })).outcomes)
     }
   }
   if (verb === 'baseline') {

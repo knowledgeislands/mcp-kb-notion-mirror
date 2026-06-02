@@ -15,7 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { type Config, DEFAULT_BANNER_TEMPLATE } from '../../config/index.js'
 import { _clearTitlePropertyCache } from '../notes/title-property.js'
 import type { NotionParent } from '../notion-client/index.js'
-import { baselineTree, deleteTree, preflightTree, publishTreeNote, statusTree, touchTree, updateTree } from './index.js'
+import { baselineTree, deleteTree, hasDrifted, preflightTree, publishTreeNote, statusTree, touchTree, updateTree } from './index.js'
 import type { MirrorSettings } from './settings.js'
 
 const DB_ID = '36f9f7187cc280f69272e60aa89bff24'
@@ -272,6 +272,45 @@ describe('tree verbs', () => {
       expect(res.outcomes.map((o) => o.action)).toEqual(['update'])
       expect(fetchMock).toHaveBeenCalled()
     })
+
+    it('verify reads the live page but still skips when it has not drifted', async () => {
+      await write('Alpha/Alpha.md', fm({}))
+      routeHappy()
+      await touchTree(cfg, SUBTREE, ROOT_PARENT, s)
+      await updateTree(cfg, SUBTREE, ROOT_PARENT, s) // stamps published_at = the page's last_edited_time
+      fetchMock.mockClear()
+      const res = await updateTree(cfg, SUBTREE, ROOT_PARENT, s, { verify: true })
+      // live last_edited == stored published_at → not drifted → hash skip
+      expect(res.outcomes.map((o) => o.action)).toEqual(['skip'])
+      // but the drift READ did happen
+      expect(fetchMock.mock.calls.some((c) => /\/v1\/pages\/[a-f0-9]{32}$/.test(String(c[0])) && (c[1]?.method ?? 'GET') === 'GET')).toBe(true)
+    })
+
+    it('verify force re-pushes a page Notion edited after the last mirror (drift)', async () => {
+      await write('Alpha/Alpha.md', fm({}))
+      routeHappy()
+      await touchTree(cfg, SUBTREE, ROOT_PARENT, s)
+      await updateTree(cfg, SUBTREE, ROOT_PARENT, s) // published_at = 2026-05-30T02:00:00Z
+      // Re-route so the live page reports a much later edit → drift.
+      fetchMock.mockImplementation(async (url: string, init?: { method?: string }) => {
+        const method = init?.method ?? 'GET'
+        if (url.includes('/v1/databases/')) return ok(DB_RESPONSE)
+        const m = url.match(/\/v1\/pages\/([a-f0-9]{32})$/)
+        if (m && (method === 'GET' || method === 'PATCH')) return ok({ ...pageResponse(m[1] as string), last_edited_time: '2026-05-30T05:00:00.000Z', parent: ROOT_PARENT })
+        if (url.includes('/children') && method === 'GET') return ok({ results: [], has_more: false, next_cursor: null })
+        return ok({ results: [{ id: 'x' }] })
+      })
+      const res = await updateTree(cfg, SUBTREE, ROOT_PARENT, s, { verify: true })
+      expect(res.outcomes.map((o) => o.action)).toEqual(['update'])
+    })
+
+    it('verify on a malformed url skips the drift read and surfaces the update error', async () => {
+      await write('Alpha/Alpha.md', fm({ kb_notion_mirror_url: 'https://www.notion.so/no-id-here' }))
+      routeHappy()
+      const res = await updateTree(cfg, SUBTREE, ROOT_PARENT, s, { verify: true })
+      expect(res.outcomes[0]).toMatchObject({ action: 'error' })
+      expect(res.outcomes[0]?.error).toMatch(/Could not extract a 32-hex page id/)
+    })
   })
 
   describe('baselineTree', () => {
@@ -390,5 +429,27 @@ describe('tree verbs', () => {
       const res = await publishTreeNote(cfg, SUBTREE, ROOT_PARENT, s, 'Alpha/Orphans/Orphans.md')
       expect(res.chain).toEqual(['Alpha/Orphans/Orphans.md'])
     })
+  })
+})
+
+describe('hasDrifted', () => {
+  it('is true when Notion edited the page well after the last push', () => {
+    expect(hasDrifted('2026-05-30T02:00:00Z', '2026-05-30T03:00:00Z')).toBe(true)
+  })
+
+  it('is false when the last edit is within the grace margin', () => {
+    expect(hasDrifted('2026-05-30T02:00:00Z', '2026-05-30T02:01:00Z')).toBe(false) // 60s < 120s grace
+  })
+
+  it('is false when there is no published_at to compare against', () => {
+    expect(hasDrifted(undefined, '2026-05-30T03:00:00Z')).toBe(false)
+  })
+
+  it('is false when published_at is unparseable', () => {
+    expect(hasDrifted('not-a-date', '2026-05-30T03:00:00Z')).toBe(false)
+  })
+
+  it('is false when last_edited_time is unparseable', () => {
+    expect(hasDrifted('2026-05-30T02:00:00Z', 'garbage')).toBe(false)
   })
 })

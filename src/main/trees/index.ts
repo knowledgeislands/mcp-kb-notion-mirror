@@ -18,7 +18,7 @@ import { readFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import type { Config } from '../../config/index.js'
 import { baselineNote, deleteNote, touchNote, updateNote } from '../notes/index.js'
-import type { NotionParent } from '../notion-client/index.js'
+import { extractPageIdFromUrl, getPage, type NotionParent } from '../notion-client/index.js'
 import { buildLinkMap, discover, iconFor, indexKbPathFor, type Note, publishOrder, readFrontmatter, resolveParent } from './discover.js'
 import type { MirrorSettings } from './settings.js'
 
@@ -148,18 +148,38 @@ export const touchTree = async (cfg: Config, subtree: string, parent: NotionPare
   return { eligible: notes.length, outcomes }
 }
 
+/** Grace margin for drift detection — absorbs Notion's minute-rounding of timestamps and clock skew. */
+export const DRIFT_GRACE_MS = 120_000
+
+/**
+ * Whether Notion edited a page after our last push: `lastEditedTime` later than
+ * the recorded `publishedAt` by more than `graceMs`. The margin covers Notion's
+ * minute-rounded `last_edited_time` and any skew between the baseline stamp's
+ * clock and Notion's. No `publishedAt` (never mirrored/baselined) or an
+ * unparseable timestamp → can't tell → treated as not drifted.
+ */
+export const hasDrifted = (publishedAt: string | undefined, lastEditedTime: string, graceMs = DRIFT_GRACE_MS): boolean => {
+  if (!publishedAt) return false
+  const pub = Date.parse(publishedAt)
+  const edited = Date.parse(lastEditedTime)
+  if (Number.isNaN(pub) || Number.isNaN(edited)) return false
+  return edited - pub > graceMs
+}
+
 /**
  * Update every touched note in the subtree (or one note's chain), pushing its
  * body and resolving `[[wikilinks]]` via `linkMap` (defaults to one built from
  * this subtree's notes; pass an explicit map for cross-root resolution). A note
- * that hasn't been touched is reported skipped, not created.
+ * that hasn't been touched is reported skipped, not created. With `verify`, each
+ * page's live `last_edited_time` is checked against `published_at` and a
+ * drifted page (edited directly in Notion) is force re-pushed.
  */
 export const updateTree = async (
   cfg: Config,
   subtree: string,
   parent: NotionParent,
   s: MirrorSettings,
-  opts: { kbPath?: string; linkMap?: Record<string, string>; force?: boolean } = {}
+  opts: { kbPath?: string; linkMap?: Record<string, string>; force?: boolean; verify?: boolean } = {}
 ): Promise<TreeResult> => {
   const kbRoot = requireRoot(cfg)
   const notes = notesFor(kbRoot, subtree, s, opts.kbPath)
@@ -180,7 +200,17 @@ export const updateTree = async (
       continue
     }
     try {
-      const res = await updateNote(cfg, n.kbPath, resolved, { icon: iconFor(n.fields.icon, s), linkMap, force: opts.force })
+      let force = opts.force ?? false
+      // `--verify`: re-push a page Notion edited after our last mirror. Costs one
+      // read per note (skipped on a normal run); the hash gate handles the rest.
+      if (opts.verify) {
+        const pageId = extractPageIdFromUrl(have)
+        if (pageId) {
+          const live = await getPage(cfg, pageId)
+          if (hasDrifted(n.fields.kb_notion_mirror_published_at, live.last_edited_time)) force = true
+        }
+      }
+      const res = await updateNote(cfg, n.kbPath, resolved, { icon: iconFor(n.fields.icon, s), linkMap, force })
       // `skipped` → content unchanged since last mirror, no Notion call made.
       outcomes.push({ kbPath: n.kbPath, action: 'skipped' in res ? 'skip' : 'update', url: res.url })
     } catch (err) {
