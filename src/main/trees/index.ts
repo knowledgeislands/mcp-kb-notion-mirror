@@ -19,6 +19,7 @@ import { dirname } from 'node:path'
 import type { Config } from '../../config/index.js'
 import { baselineNote, deleteNote, touchNote, updateNote } from '../notes/index.js'
 import { extractPageIdFromUrl, getPage, type NotionParent } from '../notion-client/index.js'
+import { buildGlobalLinkMap } from '../roots/index.js'
 import { buildLinkMap, discover, iconFor, indexKbPathFor, type Note, publishOrder, readFrontmatter, resolveParent } from './discover.js'
 import type { MirrorSettings } from './settings.js'
 
@@ -180,11 +181,13 @@ export const hasDrifted = (publishedAt: string | undefined, lastEditedTime: stri
 
 /**
  * Update every touched note in the subtree (or one note's chain), pushing its
- * body and resolving `[[wikilinks]]` via `linkMap` (defaults to one built from
- * this subtree's notes; pass an explicit map for cross-root resolution). A note
- * that hasn't been touched is reported skipped, not created. With `verify`, each
- * page's live `last_edited_time` is checked against `published_at` and a
- * drifted page (edited directly in Notion) is force re-pushed.
+ * body and resolving `[[wikilinks]]` via `linkMap`. The default map spans EVERY
+ * mirror root (so a subtree republish still resolves links pointing outside it),
+ * with this subtree's own notes overlaid on top so a bare `[[Name]]` that
+ * collides across roots still resolves to the local note. Pass an explicit map
+ * to override entirely. A note that hasn't been touched is reported skipped, not
+ * created. With `verify`, each page's live `last_edited_time` is checked against
+ * `published_at` and a drifted page (edited directly in Notion) is force re-pushed.
  */
 export const updateTree = async (
   cfg: Config,
@@ -195,7 +198,8 @@ export const updateTree = async (
 ): Promise<TreeResult> => {
   const kbRoot = requireRoot(cfg)
   const notes = notesFor(kbRoot, subtree, s, opts.kbPath)
-  const linkMap = opts.linkMap ?? buildLinkMap(notes)
+  // KB-wide map for cross-subtree links, local notes overlaid so same-name links stay local.
+  const linkMap = opts.linkMap ?? { ...buildGlobalLinkMap(kbRoot, s), ...buildLinkMap(notes) }
   const urlByKbPath = seedUrls(notes)
   const outcomes: NoteOutcome[] = []
   // Push the outcome AND emit it to the optional progress callback (live CLI logging).
@@ -255,7 +259,8 @@ export const baselineTree = async (
 ): Promise<TreeResult> => {
   const kbRoot = requireRoot(cfg)
   const notes = notesFor(kbRoot, subtree, s, opts.kbPath)
-  const linkMap = opts.linkMap ?? buildLinkMap(notes)
+  // KB-wide map for cross-subtree links, local notes overlaid so same-name links stay local.
+  const linkMap = opts.linkMap ?? { ...buildGlobalLinkMap(kbRoot, s), ...buildLinkMap(notes) }
   const urlByKbPath = seedUrls(notes)
   const outcomes: NoteOutcome[] = []
   for (const n of notes) {

@@ -22,7 +22,7 @@
 import { existsSync, readdirSync } from 'node:fs'
 import { basename, join, relative } from 'node:path'
 import type { NotionParent } from '../notion-client/index.js'
-import { isEligible, loadNote, type Note } from '../trees/discover.js'
+import { buildLinkMap, discover, isEligible, loadNote, type Note } from '../trees/discover.js'
 import type { MirrorSettings } from '../trees/settings.js'
 
 /** A folder declared as a mirror root via `kb_notion_mirror_root` frontmatter. */
@@ -88,3 +88,17 @@ export const discoverRoots = (kbRoot: string, s: MirrorSettings): MirrorRoot[] =
 
 /** List the declared mirror roots (discovery only — no Notion call). */
 export const listRoots = (kbRoot: string, s: MirrorSettings): MirrorRoot[] => discoverRoots(kbRoot, s)
+
+/**
+ * Build a wikilink → mirror-URL map spanning EVERY declared mirror root, so a
+ * subtree (or single-note) republish still resolves `[[wikilinks]]` that point
+ * *outside* the walked subtree into `@mentions` instead of silently degrading
+ * them to italic text. Without this a partial publish only knows its own
+ * subtree's URLs and quietly drops every cross-root link.
+ *
+ * Pure — disk reads only (re-reads each note's `kb_notion_mirror_url`, like
+ * `buildLinkMap`). Bare-basename collisions across roots resolve last-wins, so
+ * callers that have a notion of "local" should overlay their own subtree map on
+ * top (see `updateTree`) to keep same-name links pointing at the local note.
+ */
+export const buildGlobalLinkMap = (kbRoot: string, s: MirrorSettings): Record<string, string> => buildLinkMap(discoverRoots(kbRoot, s).flatMap((r) => discover(kbRoot, r.subtree, s)))

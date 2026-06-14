@@ -28,7 +28,7 @@ const kbPathArg = z
 const linkMapArg = z
   .record(z.string().max(1024), z.string().max(2048))
   .describe(
-    'Wikilink resolution map ([[target]] → mirror URL). Pass a map spanning MORE than this subtree (e.g. every root, built from roots_list + statuses) to resolve cross-root [[wikilinks]] into @mentions. Omit → built from this subtree only.'
+    'Wikilink resolution map ([[target]] → mirror URL) that OVERRIDES the default. Omit → the default spans every declared mirror root (so cross-subtree [[wikilinks]] resolve into @mentions even on a partial republish), with this subtree overlaid so a bare [[Name]] that collides across roots still resolves locally.'
   )
 
 const statusInput = z.object({ subtree: subtreeArg }).strict()
@@ -140,13 +140,13 @@ Returns: { eligible, outcomes: NoteOutcome[] } where NoteOutcome = { kbPath, act
     'kb_notion_mirror_tree_update',
     {
       title: 'Update a KB subtree — push bodies and resolve wikilinks',
-      description: `Push the body of every touched note in a subtree (or one note within it), resolving [[wikilinks]] into @mentions. Notes not yet touched are reported skipped, not created. By default the link map is built from this subtree alone; pass link_map to resolve across a wider set (e.g. cross-root).
+      description: `Push the body of every touched note in a subtree (or one note within it), resolving [[wikilinks]] into @mentions. Notes not yet touched are reported skipped, not created. By default the link map spans EVERY declared mirror root, so cross-subtree [[wikilinks]] resolve into @mentions even on a partial republish (this subtree is overlaid so a bare [[Name]] that collides across roots stays local); pass link_map to override.
 
 Args:
   - subtree (string, required): kb-relative folder to walk.
   - parent (object, required): the parent the subtree-root index sits under (same as the touch).
   - kb_path (string, optional): update just this note's ancestor chain.
-  - link_map (object, optional): wikilink → mirror URL map spanning more than this subtree (for cross-root @mentions).
+  - link_map (object, optional): wikilink → mirror URL map that overrides the default KB-wide map.
 
 Returns: { eligible, outcomes: NoteOutcome[] } where NoteOutcome = { kbPath, action: "update"|"skip"|"error", url?, error? }.`,
       inputSchema: updateInput,

@@ -13,7 +13,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { MirrorSettings } from '../trees/settings.js'
-import { discoverRoots, listRoots } from './index.js'
+import { buildGlobalLinkMap, discoverRoots, listRoots } from './index.js'
 
 const DB_ID = '36f9f7187cc280f69272e60aa89bff24'
 const PAGE_ID = '3709f7187cc281dd9a32c190c3eaf8b6'
@@ -93,5 +93,25 @@ describe('discoverRoots', () => {
   it('listRoots is the public alias of discoverRoots', async () => {
     await write('Alpha/Alpha.md', fm({ kb_notion_mirror_root: DB_ID }))
     expect(listRoots(kbRoot, s)).toEqual(discoverRoots(kbRoot, s))
+  })
+
+  describe('buildGlobalLinkMap', () => {
+    it('spans every declared root so cross-root links resolve', async () => {
+      await write('Alpha/Alpha.md', fm({ kb_notion_mirror_root: DB_ID, kb_notion_mirror_url: 'https://notion.so/alpha-aaaa' }))
+      await write('Alpha/Leaf/Leaf.md', fm({ kb_notion_mirror_url: 'https://notion.so/leaf-bbbb' }))
+      await write('Omega/Omega.md', fm({ kb_notion_mirror_root: `page:${PAGE_ID}`, kb_notion_mirror_url: 'https://notion.so/omega-cccc' }))
+
+      const map = buildGlobalLinkMap(kbRoot, s)
+      // Notes from BOTH roots are present (bare basename + full path aliases).
+      expect(map.Alpha).toBe('https://notion.so/alpha-aaaa')
+      expect(map.Leaf).toBe('https://notion.so/leaf-bbbb')
+      expect(map.Omega).toBe('https://notion.so/omega-cccc')
+      expect(map['Alpha/Leaf/Leaf']).toBe('https://notion.so/leaf-bbbb')
+    })
+
+    it('omits notes that are not yet mirrored', async () => {
+      await write('Alpha/Alpha.md', fm({ kb_notion_mirror_root: DB_ID })) // no url yet
+      expect(buildGlobalLinkMap(kbRoot, s).Alpha).toBeUndefined()
+    })
   })
 })
