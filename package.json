@@ -85,7 +85,7 @@
     "url": "git+https://github.com/knowledgeislands/mcp-kb-notion-mirror.git"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && chmod +x dist/mcp-server/index.js dist/cli/cli.js",
+    "build": "tsc -p tsconfig.build.json && chmod +x dist/cli/cli.js",
     "clean": "rm -rf {dist,node_modules}",
     "deps:missing": "bunx depcheck --json | bunx node-jq --sort-keys '.' | bunx node-jq '.missing | keys | .[]' | xargs bun add -D",
     "deps:unused": "bunx depcheck --json | bunx node-jq --sort-keys '.' | bunx node-jq '.devDependencies[]' | xargs bun remove",

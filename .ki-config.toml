@@ -4,3 +4,8 @@
 visibility = "public"   # "public" | "private"
 # This repo fully conforms, so it declares no check overrides. To diverge, add a
 # [knowledgeislands-repo.checks] table with one boolean per check (true = enforce).
+
+# Read by the knowledgeislands-engineering skill (the common build/lint/test toolchain).
+[knowledgeislands-engineering]
+# This repo fully conforms, so it declares no check overrides. To diverge, add a
+# [knowledgeislands-engineering.checks] table with one boolean per check (true = enforce).
