@@ -7,36 +7,10 @@
  * supplied per operation (tool args / CLI flags), not via env. Settings only
  * carry the exclusion + icon knobs that apply uniformly across every subtree.
  *
- * Loaded from env at CLI / tool-handler start; constructed directly in tests.
+ * The settings are now parsed by `loadConfig` (config/index.ts) as the `mirror`
+ * slice of `Config` — env is read ONLY there. This module just re-exports the
+ * `MirrorSettings` shape so the walk modules keep their local import path; main/
+ * receives the parsed slice as an argument and never reads env itself.
  */
 
-export interface MirrorSettings {
-  /** Filename prefixes whose notes are excluded from publishing. Default ["+"]. */
-  skipPrefixes: string[]
-  /** Specific kb-paths (relative to kbRoot) to skip. Default: []. */
-  skipKbPaths: Set<string>
-  /** Base URL pattern for Lucide-style external icons. `<name>.svg` is appended. */
-  iconBaseUrl: string
-}
-
-const splitCsv = (raw: string | undefined, fallback: string[]): string[] => {
-  if (raw === undefined || raw.trim() === '') return fallback
-  return raw
-    .split(',')
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0)
-}
-
-/**
- * Build settings from env. No required var — the subtree + parent are passed
- * per call, so a missing env just falls back to the defaults below.
- *   MCP_KB_NOTION_MIRROR_SKIP_PREFIXES  default ["+"]
- *   MCP_KB_NOTION_MIRROR_SKIP_PATHS     default []
- *   MCP_KB_NOTION_MIRROR_ICON_BASE_URL  default the lucide-static CDN URL
- */
-export const loadMirrorSettings = (env: NodeJS.ProcessEnv = process.env): MirrorSettings => {
-  const skipPrefixes = splitCsv(env.MCP_KB_NOTION_MIRROR_SKIP_PREFIXES, ['+'])
-  const skipKbPaths = new Set(splitCsv(env.MCP_KB_NOTION_MIRROR_SKIP_PATHS, []))
-  const iconBaseUrl = (env.MCP_KB_NOTION_MIRROR_ICON_BASE_URL ?? 'https://unpkg.com/lucide-static@latest/icons').replace(/\/+$/, '')
-  return { skipPrefixes, skipKbPaths, iconBaseUrl }
-}
+export type { MirrorSettings } from '../../config/index.js'

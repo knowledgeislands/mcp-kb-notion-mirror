@@ -28,6 +28,7 @@ const EXPECTED_TOOLS = [
   'kb_notion_mirror_tree_touch',
   'kb_notion_mirror_tree_update',
   'kb_notion_mirror_tree_delete',
+  'kb_notion_mirror_tree_prune',
   'kb_notion_mirror_roots_list'
 ] as const
 

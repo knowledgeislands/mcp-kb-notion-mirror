@@ -69,6 +69,7 @@ describe('note verbs', () => {
       notionApiVersion: '2022-06-28',
       kbRoot,
       bannerTemplate: DEFAULT_BANNER_TEMPLATE,
+      mirror: { skipPrefixes: ['+'], skipKbPaths: new Set<string>(), iconBaseUrl: 'https://unpkg.com/lucide-static@latest/icons' },
       accessLevel: 'write',
       auditLogMode: 'off',
       auditLogPath: '',

@@ -95,6 +95,7 @@ describe('tree verbs', () => {
       notionApiVersion: '2022-06-28',
       kbRoot,
       bannerTemplate: DEFAULT_BANNER_TEMPLATE,
+      mirror: settings(),
       accessLevel: 'destructive',
       auditLogMode: 'off',
       auditLogPath: '',

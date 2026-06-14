@@ -1,7 +1,7 @@
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { loadConfig } from './index.js'
+import { loadConfig, loadMirrorSettings } from './index.js'
 
 // loadConfig reads from the env object it's given, so tests pass explicit envs
 // (no process.env mutation, no module-reset dance).
@@ -29,6 +29,14 @@ describe('loadConfig', () => {
 
     it('respects the override and strips trailing slashes', () => {
       expect(load({ MCP_KB_NOTION_MIRROR_API_BASE_URL: 'https://example.test///' }).notionApiBaseUrl).toBe('https://example.test')
+    })
+
+    it('rejects a non-HTTPS base URL (SSRF/plaintext-downgrade discipline)', () => {
+      expect(() => load({ MCP_KB_NOTION_MIRROR_API_BASE_URL: 'http://api.notion.com' })).toThrow(/must use https:/)
+    })
+
+    it('rejects an unparseable base URL', () => {
+      expect(() => load({ MCP_KB_NOTION_MIRROR_API_BASE_URL: 'not a url' })).toThrow(/must be a valid absolute URL/)
     })
 
     it('pins the Notion API version', () => {
@@ -71,6 +79,26 @@ describe('loadConfig', () => {
 
     it('passes a custom template through verbatim', () => {
       expect(load({ MCP_KB_NOTION_MIRROR_BANNER_TEMPLATE: 'Synced {date}.' }).bannerTemplate).toBe('Synced {date}.')
+    })
+  })
+
+  describe('mirror slice', () => {
+    it('defaults the walk knobs when unset', () => {
+      const { mirror } = load()
+      expect(mirror.skipPrefixes).toEqual(['+'])
+      expect([...mirror.skipKbPaths]).toEqual([])
+      expect(mirror.iconBaseUrl).toBe('https://unpkg.com/lucide-static@latest/icons')
+    })
+
+    it('folds the SKIP_* / ICON_BASE_URL env vars into Config.mirror', () => {
+      const { mirror } = load({
+        MCP_KB_NOTION_MIRROR_SKIP_PREFIXES: '_,~',
+        MCP_KB_NOTION_MIRROR_SKIP_PATHS: 'Knowledge/Inbox.md,Knowledge/Drafts.md',
+        MCP_KB_NOTION_MIRROR_ICON_BASE_URL: 'https://cdn.example.com/icons/'
+      })
+      expect(mirror.skipPrefixes).toEqual(['_', '~'])
+      expect([...mirror.skipKbPaths]).toEqual(['Knowledge/Inbox.md', 'Knowledge/Drafts.md'])
+      expect(mirror.iconBaseUrl).toBe('https://cdn.example.com/icons') // trailing slashes stripped
     })
   })
 
@@ -154,5 +182,44 @@ describe('loadConfig', () => {
     it('throws on a non-numeric value', () => {
       expect(() => load({ MCP_KB_NOTION_MIRROR_AUDIT_LOG_KEEP: 'lots' })).toThrow(/MCP_KB_NOTION_MIRROR_AUDIT_LOG_KEEP/)
     })
+  })
+})
+
+// `loadMirrorSettings` is the standalone reader the CLI's local-only verbs use;
+// it reads the same env as `Config.mirror` but without requiring the token.
+describe('loadMirrorSettings', () => {
+  it('uses defaults when nothing is set (no required env var)', () => {
+    const s = loadMirrorSettings({})
+    expect(s.skipPrefixes).toEqual(['+'])
+    expect([...s.skipKbPaths]).toEqual([])
+    expect(s.iconBaseUrl).toBe('https://unpkg.com/lucide-static@latest/icons')
+  })
+
+  it('honours overrides via env', () => {
+    const s = loadMirrorSettings({
+      MCP_KB_NOTION_MIRROR_SKIP_PREFIXES: '_,~',
+      MCP_KB_NOTION_MIRROR_SKIP_PATHS: 'Knowledge/Inbox.md,Knowledge/Drafts.md',
+      MCP_KB_NOTION_MIRROR_ICON_BASE_URL: 'https://cdn.example.com/icons/'
+    })
+    expect(s.skipPrefixes).toEqual(['_', '~'])
+    expect([...s.skipKbPaths]).toEqual(['Knowledge/Inbox.md', 'Knowledge/Drafts.md'])
+    expect(s.iconBaseUrl).toBe('https://cdn.example.com/icons') // trailing slashes stripped
+  })
+
+  it('falls back to defaults on blank env values', () => {
+    const s = loadMirrorSettings({ MCP_KB_NOTION_MIRROR_SKIP_PREFIXES: '   ', MCP_KB_NOTION_MIRROR_SKIP_PATHS: '' })
+    expect(s.skipPrefixes).toEqual(['+'])
+    expect([...s.skipKbPaths]).toEqual([])
+  })
+
+  it('reads from process.env by default', () => {
+    const prev = process.env.MCP_KB_NOTION_MIRROR_SKIP_PREFIXES
+    process.env.MCP_KB_NOTION_MIRROR_SKIP_PREFIXES = '@'
+    try {
+      expect(loadMirrorSettings().skipPrefixes).toEqual(['@'])
+    } finally {
+      if (prev === undefined) delete process.env.MCP_KB_NOTION_MIRROR_SKIP_PREFIXES
+      else process.env.MCP_KB_NOTION_MIRROR_SKIP_PREFIXES = prev
+    }
   })
 })

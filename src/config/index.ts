@@ -24,6 +24,21 @@ export type AuditLogMode = 'off' | 'writes' | 'all'
  */
 export const DEFAULT_BANNER_TEMPLATE = "**Mirrored from Knowledge Base on {date}** — canonical version lives in HNR's KB; feedback via comments here will be triaged back into the KB."
 
+/**
+ * Mirror-walk settings — the KB-specific knobs the tree/roots walks need beyond
+ * the per-call config. Layout-agnostic: no fixed root folder, no fixed wiki
+ * parent (those are supplied per operation). These knobs carry only the
+ * exclusion + icon settings that apply uniformly across every subtree.
+ */
+export interface MirrorSettings {
+  /** Filename prefixes whose notes are excluded from publishing. Default ["+"]. */
+  skipPrefixes: string[]
+  /** Specific kb-paths (relative to kbRoot) to skip. Default: []. */
+  skipKbPaths: Set<string>
+  /** Base URL pattern for Lucide-style external icons. `<name>.svg` is appended. */
+  iconBaseUrl: string
+}
+
 export interface Config {
   /** Notion internal-integration secret (`ntn_…`). Never logged or returned. */
   notionToken: string
@@ -32,6 +47,8 @@ export interface Config {
   /** Absolute KB root. When set, `kb_path`s resolve under it and are confined to it; when unset, only absolute paths are accepted. */
   kbRoot: string | undefined
   bannerTemplate: string
+  /** Mirror-walk settings (skip prefixes/paths + icon base URL). */
+  mirror: MirrorSettings
   accessLevel: AccessLevel
   auditLogMode: AuditLogMode
   auditLogPath: string
@@ -72,6 +89,53 @@ const resolveKbRoot = (raw: string | undefined): string | undefined => {
   return path.resolve(expandHome(trimmed))
 }
 
+const splitCsv = (raw: string | undefined, fallback: string[]): string[] => {
+  if (raw === undefined || raw.trim() === '') return fallback
+  return raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+}
+
+/**
+ * Build the mirror-walk settings slice from env. No required var — the subtree +
+ * parent are passed per call, so a missing env just falls back to the defaults:
+ *   MCP_KB_NOTION_MIRROR_SKIP_PREFIXES  default ["+"]
+ *   MCP_KB_NOTION_MIRROR_SKIP_PATHS     default []
+ *   MCP_KB_NOTION_MIRROR_ICON_BASE_URL  default the lucide-static CDN URL
+ *
+ * `loadConfig` folds the result into `Config.mirror`; it is also exported so the
+ * CLI's local-only verbs (tree status/preflight) can read just this slice
+ * without requiring the Notion token that full `loadConfig` demands — env is
+ * still read only here, inside config/.
+ */
+export const loadMirrorSettings = (env: NodeJS.ProcessEnv = process.env): MirrorSettings => ({
+  skipPrefixes: splitCsv(env.MCP_KB_NOTION_MIRROR_SKIP_PREFIXES, ['+']),
+  skipKbPaths: new Set(splitCsv(env.MCP_KB_NOTION_MIRROR_SKIP_PATHS, [])),
+  iconBaseUrl: (env.MCP_KB_NOTION_MIRROR_ICON_BASE_URL ?? 'https://unpkg.com/lucide-static@latest/icons').replace(/\/+$/, '')
+})
+
+/**
+ * Resolve + validate the Notion API base URL. SSRF discipline (standard §6 /
+ * §13.5): the base must parse as an `https:` URL — a non-HTTPS or unparseable
+ * value is rejected so a misconfigured base can never downgrade to plaintext or
+ * point the Bearer-bearing client at an attacker-controlled host. Trailing
+ * slashes are trimmed so callers can append `/v1/...` cleanly.
+ */
+const parseNotionApiBaseUrl = (raw: string | undefined): string => {
+  const trimmed = (raw ?? 'https://api.notion.com').trim().replace(/\/+$/, '')
+  let url: URL
+  try {
+    url = new URL(trimmed)
+  } catch {
+    throw new Error(`Invalid MCP_KB_NOTION_MIRROR_API_BASE_URL="${raw}" — must be a valid absolute URL.`)
+  }
+  if (url.protocol !== 'https:') {
+    throw new Error(`Invalid MCP_KB_NOTION_MIRROR_API_BASE_URL="${raw}" — must use https: (got "${url.protocol}"). The Notion token is sent as a Bearer header; plaintext is rejected.`)
+  }
+  return trimmed
+}
+
 /**
  * Load configuration from `env` (defaults to `process.env`, after attempting to
  * hydrate it from `.env.${NODE_ENV}`). Throws if a required var is missing.
@@ -89,11 +153,12 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config => {
       'MCP_KB_NOTION_MIRROR_TOKEN',
       'Create a Notion internal integration, grant it Read + Insert + Update content, connect it to the target page/database, and copy its secret (ntn_…) here.'
     ),
-    notionApiBaseUrl: (env.MCP_KB_NOTION_MIRROR_API_BASE_URL ?? 'https://api.notion.com').replace(/\/+$/, ''),
+    notionApiBaseUrl: parseNotionApiBaseUrl(env.MCP_KB_NOTION_MIRROR_API_BASE_URL),
     // Notion versions the API via a header, not the URL. Bump when Notion ships a new stable date.
     notionApiVersion: '2022-06-28',
     kbRoot: resolveKbRoot(env.MCP_KB_NOTION_MIRROR_KB_ROOT),
     bannerTemplate: env.MCP_KB_NOTION_MIRROR_BANNER_TEMPLATE ?? DEFAULT_BANNER_TEMPLATE,
+    mirror: loadMirrorSettings(env),
     accessLevel: parseAccessLevel(env.MCP_KB_NOTION_MIRROR_ACCESS_LEVEL),
     auditLogMode: parseAuditLogMode(env.MCP_KB_NOTION_MIRROR_AUDIT_LOG),
     auditLogPath: path.resolve(expandHome(env.MCP_KB_NOTION_MIRROR_AUDIT_LOG_PATH ?? path.join(os.homedir(), '.local', 'state', 'mcp-kb-notion-mirror', 'audit.jsonl'))),

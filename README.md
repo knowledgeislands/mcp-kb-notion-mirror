@@ -24,6 +24,8 @@ There is **no fixed root folder and no fixed wiki database**. Every mutation
 takes the `kb_path`/`subtree` and the `parent` it attaches under **per call** —
 so you can mirror any note or folder under any Notion parent.
 
+Conforms to the **MCP specification 2025-11-25**.
+
 ## The verb model
 
 Each resource shares one verb set (the `note`/`tree` columns show where a verb
@@ -120,7 +122,7 @@ resolve.
 
 ## Tools
 
-Thirteen tools across the three resources. `note` (7):
+Fourteen tools across the three resources. `note` (7):
 
 - **`kb_notion_mirror_note_get(kb_path)`** — read. Live Notion page state, or
   `{ exists: false, reason: "not-mirrored" }`.
@@ -131,15 +133,17 @@ Thirteen tools across the three resources. `note` (7):
 - **`kb_notion_mirror_note_move(kb_path, parent)`** — write. `{ moved: true, page_id, previous_parent, new_parent }`.
 - **`kb_notion_mirror_note_delete(kb_path, dry_run?)`** — destructive. Archive + clear frontmatter; `dry_run` default `true`.
 
-`tree` (5) — each takes `subtree` and (for mutations) `parent`; `touch`/`update`/`delete` accept an optional `kb_path` to act on just one note's ancestor chain:
+`tree` (6) — each takes `subtree` and (for mutations) `parent`; `touch`/`update`/`delete` accept an optional `kb_path` to act on just one note's ancestor chain:
 
 - **`kb_notion_mirror_tree_status(subtree)`** / **`_preflight(subtree)`** — read.
 - **`kb_notion_mirror_tree_touch(subtree, parent, kb_path?)`** — write. Scaffold every note DFS so all URLs exist.
 - **`kb_notion_mirror_tree_update(subtree, parent, kb_path?, link_map?)`** — write. Push bodies; pass `link_map` to resolve **cross-root** wikilinks.
 - **`kb_notion_mirror_tree_delete(subtree, kb_path?, dry_run?)`** — destructive.
+- **`kb_notion_mirror_tree_prune(subtree, dry_run?)`** — destructive. Git-driven: archive the mirror pages of notes **deleted** under the subtree (a `kb_notion_mirror_url` gone from every live note on disk; a moved note keeps its URL and is never pruned). Requires the KB root to be a git repo; `dry_run` defaults to `true`. Returns `{ eligible, outcomes }` where each outcome's `kbPath` is the deleted note's path.
 
 Tree verbs return `{ eligible, outcomes: NoteOutcome[] }` where `NoteOutcome` is
 `{ kbPath, action: "touch"|"update"|"delete"|"skip"|"plan"|"error", url?, error? }`.
+`tree_prune` reuses this shape: `plan` (dry-run preview), `delete` (page archived), or `error`.
 
 `roots` (1):
 

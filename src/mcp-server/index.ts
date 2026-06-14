@@ -40,14 +40,13 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { loadConfig } from '../config/index.js'
-import { loadMirrorSettings } from '../main/trees/settings.js'
 import { registerNoteTools } from '../tools/note/index.js'
 import { registerRootsTools } from '../tools/roots/index.js'
 import { registerTreeTools } from '../tools/tree/index.js'
 import { makeAccessGatedRegister } from '../utils/access-level.js'
 
 const config = loadConfig()
-const settings = loadMirrorSettings()
+const settings = config.mirror
 
 console.error(`mcp-kb-notion-mirror starting...`)
 console.error(`  MCP_KB_NOTION_MIRROR_API_BASE_URL=${config.notionApiBaseUrl}`)

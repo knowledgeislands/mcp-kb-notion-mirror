@@ -2,6 +2,8 @@
 
 Guidance for Claude Code when working in this repo. The user-facing tool surface, install/config, and Claude Desktop setup live in [README.md](./README.md); this file covers what Claude needs that isn't in README and isn't derivable from one grep.
 
+Targets the MCP specification **2025-11-25** (the workspace MCP standard's tracked release). Tool-result, error-envelope, and metadata behaviour conform to that revision.
+
 ## What this MCP does
 
 Mirrors KB markdown notes into Notion and writes the resulting page URL back into each note's frontmatter. Three resources of tools, all wire-prefixed `kb_notion_mirror_`:
@@ -14,9 +16,9 @@ There is **no fixed root folder and no fixed wiki database**. The `subtree`/`kb_
 
 ### The verb model (the core idea)
 
-Verbs: `get` · `status` · `preflight` · `touch` · `update` · `move` · `delete`. `note` has all seven; `tree` has all but `get`/`move`; `roots` has only `list`.
+Verbs: `get` · `status` · `preflight` · `touch` · `update` · `move` · `delete`, plus the tree-only `prune`. `note` has all seven; `tree` has all but `get`/`move`, and adds `prune`; `roots` has only `list`.
 
-**Mirroring is two-phase — there is no `create`.** `touch` creates a body-less scaffold (title + icon + banner + the page's place in the child-pages hierarchy) so the page URL becomes known; `update` then pushes the body and resolves `[[wikilinks]]` into `@`mentions, and **requires a prior touch** (it throws otherwise). This guarantees every link target exists before any body renders, so the order is always touch-all → update-all. `tree_update` accepts an optional `link_map` so the CLI can resolve cross-root mentions with one map spanning every root. `delete` is the only `dry_run` verb (default `true`) — archiving breaks inbound `@`mentions, so it previews by default.
+**Mirroring is two-phase — there is no `create`.** `touch` creates a body-less scaffold (title + icon + banner + the page's place in the child-pages hierarchy) so the page URL becomes known; `update` then pushes the body and resolves `[[wikilinks]]` into `@`mentions, and **requires a prior touch** (it throws otherwise). This guarantees every link target exists before any body renders, so the order is always touch-all → update-all. `tree_update` accepts an optional `link_map` so the CLI can resolve cross-root mentions with one map spanning every root. Two verbs default to `dry_run: true` — `delete` (archiving breaks inbound `@`mentions) and the git-driven `tree_prune` (it archives pages whose backing note was deleted) — so both preview by default and only mutate when `dry_run` is explicitly `false`.
 
 ## Bun vs Node
 
@@ -32,10 +34,10 @@ Run `bun run` with no args for the full script list.
 
 ### Project layout & config injection (the workspace MCP shape)
 
-- **[src/config/index.ts](./src/config/index.ts)** — `loadConfig(env?) → Config`. Reads env (optionally hydrated from `.env.${NODE_ENV}`) into a plain `Config` value. **There is no module-level config singleton — nothing reads env at import time.**
+- **[src/config/index.ts](./src/config/index.ts)** — `loadConfig(env?) → Config`. Reads env (optionally hydrated from `.env.${NODE_ENV}`) into a plain `Config` value. **There is no module-level config singleton — nothing reads env at import time, and `config/` is the only place env is read.** The mirror-walk knobs (`MCP_KB_NOTION_MIRROR_SKIP_*` / `…_ICON_BASE_URL`) parse here too, folded into `Config.mirror: MirrorSettings`; `loadMirrorSettings(env?)` is exported so the CLI's local-only verbs can read just that slice without requiring the token. `main/` takes the parsed slice as an argument — it never reads env itself. `notionApiBaseUrl` is validated as an `https:` URL (non-HTTPS / unparseable is rejected — SSRF / plaintext-downgrade discipline, since the Notion token rides as a Bearer header).
 - **[src/mcp-server/index.ts](./src/mcp-server/index.ts)** — the stdio MCP wrapper. Calls `loadConfig()` once, wires the access gate, and threads the `Config` into `registerNoteTools` → `registerTreeTools` → `registerRootsTools`. Excluded from coverage.
 - **[src/tools/](./src/tools/)** — MCP tool definitions only, one dir per resource (`note`, `tree`, `roots`). Thin: validate args (zod), confine paths, call a `main/`-or-`cli/` function, map result/throw to an MCP envelope via `jsonResult`/`errorResult`. `src/tools/**/index.ts` is excluded from coverage — never put logic there.
-- **[src/main/](./src/main/)** — the implementation, mirroring the resources: `main/notes/` (the seven note verbs + banner, footer, wikilinks, markdown, frontmatter, title-property, and the `read.ts` reader split), `main/trees/` (walk/order/resolve in `discover.ts`, the tree verbs + walk `settings.ts` in `index.ts`), `main/roots/` (pruned discovery → `listRoots`), `main/notion-client/` (the HTTP layer). Every entry point takes `Config` (or its needed slice) as its first argument.
+- **[src/main/](./src/main/)** — the implementation, mirroring the resources: `main/notes/` (the seven note verbs + banner, footer, wikilinks, markdown, frontmatter, title-property, and the `read.ts` reader split), `main/trees/` (walk/order/resolve in `discover.ts`, the tree verbs in `index.ts`, the git-driven `prune.ts`; `settings.ts` now just re-exports the `MirrorSettings` type — its env reader moved to `config/`), `main/roots/` (pruned discovery → `listRoots`), `main/notion-client/` (the HTTP layer). Every entry point takes `Config` (or its needed slice — e.g. the `MirrorSettings` walk slice) as its first argument.
 - **[src/cli/](./src/cli/)** — the operator surface (renamed from `orchestrator` for the common `main`/`cli` shape). `cli.ts` is the `mcp-kb-notion-mirror-publish` bin — a `<resource> <verb>` dispatcher that does all human-readable printing; coverage-excluded. `index.ts` is the library barrel re-exporting `main/{notes,trees,roots}` + settings.
 - **[src/utils/](./src/utils/)** — cross-MCP helpers taking the specific config primitive they need (`resolveKbNotePath(kbRoot, kbPath)`, `withAuditLog(auditConfig, …)`, `makeAccessGatedRegister(server, accessLevel, audit)`). `notion-args.ts` holds the shared `parentArg`/`notionId` zod schemas; it and `annotations.ts` are pure data and coverage-excluded.
 
@@ -60,15 +62,15 @@ The MCP speaks JSON-RPC over stdout, so nothing reachable from a tool may write 
 
 ### Naming convention
 
-Tool names follow `<app>_<resource>_<action>` (snake*case) with `<app>` = the repo-derived `kb_notion_mirror` (strip `mcp-` from the package name). This is the rule across the sibling MCPs — the tool prefix, frontmatter prefix (`kb_notion_mirror*_`), and env prefix (`MCP*KB_NOTION_MIRROR*_`) all share the `kb_notion_mirror` stem. Plural resource for collection ops, singular for single-item ops. Surface (13 tools):
+Tool names follow `<app>_<resource>_<action>` (snake*case) with `<app>` = the repo-derived `kb_notion_mirror` (strip `mcp-` from the package name). This is the rule across the sibling MCPs — the tool prefix, frontmatter prefix (`kb_notion_mirror*_`), and env prefix (`MCP*KB_NOTION_MIRROR*_`) all share the `kb_notion_mirror` stem. Plural resource for collection ops, singular for single-item ops. Surface (14 tools):
 
 - `note` (single-item): `kb_notion_mirror_note_{get,status,preflight,touch,update,move,delete}` — [src/tools/note/index.ts](./src/tools/note/index.ts).
-- `tree` (single subtree): `kb_notion_mirror_tree_{status,preflight,touch,update,delete}` — [src/tools/tree/index.ts](./src/tools/tree/index.ts).
+- `tree` (single subtree): `kb_notion_mirror_tree_{status,preflight,touch,update,delete,prune}` — [src/tools/tree/index.ts](./src/tools/tree/index.ts).
 - `roots` (collection): `kb_notion_mirror_roots_list` — [src/tools/roots/index.ts](./src/tools/roots/index.ts).
 
 ### Access-level gate — driven by annotations, not names
 
-[src/utils/access-level.ts](./src/utils/access-level.ts) `makeAccessGatedRegister(server, accessLevel, audit)` derives each tool's level from `config.annotations`: `readOnlyHint:true → read`; `destructiveHint:true → destructive`; both explicitly `false → write`; anything else → `destructive` (fail-safe). A tool registers when its derived level is ≤ `cfg.accessLevel` (**default `write`**). Presets in [src/utils/annotations.ts](./src/utils/annotations.ts): `READ_ONLY_REMOTE` (get/status/preflight/roots_list), `WRITE_REMOTE_IDEMPOTENT` (touch/update/move — all reach an idempotent end state), `DESTRUCTIVE_REMOTE` (delete; defaults to dry-run). `WRITE_REMOTE` (non-idempotent) is kept for completeness. Every tool is open-world (it calls Notion). New tools MUST set `annotations` to one of those presets.
+[src/utils/access-level.ts](./src/utils/access-level.ts) `makeAccessGatedRegister(server, accessLevel, audit)` derives each tool's level from `config.annotations`: `readOnlyHint:true → read`; `destructiveHint:true → destructive`; both explicitly `false → write`; anything else → `destructive` (fail-safe). A tool registers when its derived level is ≤ `cfg.accessLevel` (**default `write`**). Presets in [src/utils/annotations.ts](./src/utils/annotations.ts): `READ_ONLY_REMOTE` (get/status/preflight/roots_list), `WRITE_REMOTE_IDEMPOTENT` (touch/update/move — all reach an idempotent end state), `DESTRUCTIVE_REMOTE` (delete and tree_prune; both default to dry-run). `WRITE_REMOTE` (non-idempotent) is kept for completeness. Every tool is open-world (it calls Notion). New tools MUST set `annotations` to one of those presets.
 
 ### `move`/`update` and the cross-parent-type silent failure
 
@@ -97,8 +99,8 @@ This server holds a Notion token, reads user-supplied paths, and writes back to 
 - **Test fixtures use a synthetic Greek scheme** (`Alpha`/`Beta`/`Gamma`, roots `Alpha`/`Omega`) — never real KB or repo names. New tests must follow this.
 - Real Notion API calls are out of tests — the client is exercised through `fetch` mocks (`vi.stubGlobal('fetch', …)`). `main/trees/index.test.ts` uses a small stateful fetch stub (records each created page's parent so the cross-parent-type guard doesn't false-fire).
 - Config is injected, so tests build a `Config`/`MirrorSettings` literal and pass it. A couple of modules keep process-lifetime caches (title-property cache, audit-log append queue) — their tests use the exported reset hook.
-- `bun run test:smoke` boots the built server over stdio and asserts the 13-tool wire surface. Keep `scripts/smoke.ts` `EXPECTED_TOOLS` in sync with the three registration sites.
+- `bun run test:smoke` boots the built server over stdio and asserts the 14-tool wire surface. Keep `scripts/smoke.ts` `EXPECTED_TOOLS` in sync with the three registration sites.
 
 ## Tool registration call sites
 
-Tools are registered in [src/tools/note/index.ts](./src/tools/note/index.ts), [src/tools/tree/index.ts](./src/tools/tree/index.ts), and [src/tools/roots/index.ts](./src/tools/roots/index.ts). To survey the surface, `grep -r "registerTool" src/tools`. README's [Tools](./README.md#tools) section tabulates all 13 with purposes and I/O shapes.
+Tools are registered in [src/tools/note/index.ts](./src/tools/note/index.ts), [src/tools/tree/index.ts](./src/tools/tree/index.ts), and [src/tools/roots/index.ts](./src/tools/roots/index.ts). To survey the surface, `grep -r "registerTool" src/tools`. README's [Tools](./README.md#tools) section tabulates all 14 with purposes and I/O shapes.

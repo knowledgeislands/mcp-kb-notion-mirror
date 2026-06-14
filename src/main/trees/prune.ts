@@ -31,8 +31,17 @@ const requireRoot = (cfg: Config): string => {
   return cfg.kbRoot
 }
 
-/** Run git in the KB root with paths never shell-expanded (KB paths contain spaces). Throws on non-zero exit. */
-const git = (kbRoot: string, args: string[]): string => execFileSync('git', ['-c', 'core.quotePath=false', ...args], { cwd: kbRoot, encoding: 'utf-8', maxBuffer: 256 * 1024 * 1024 })
+/** Timeout for these local-only git reads (log/show/diff/rev-parse) — no network I/O. Matches mcp-git-audit's local cap. */
+const GIT_LOCAL_TIMEOUT_MS = 8000
+
+/**
+ * Run git in the KB root with paths never shell-expanded (KB paths contain
+ * spaces) and never via a shell. `--no-optional-locks` (mandatory, standard
+ * §6.3) keeps a read from ever taking a repo lock, and `timeout` (standard §6.4)
+ * bounds the call so a wedged git can't pin the server. Throws on non-zero exit.
+ */
+const git = (kbRoot: string, args: string[]): string =>
+  execFileSync('git', ['--no-optional-locks', '-c', 'core.quotePath=false', ...args], { cwd: kbRoot, encoding: 'utf-8', maxBuffer: 256 * 1024 * 1024, timeout: GIT_LOCAL_TIMEOUT_MS })
 
 const ensureGitRepo = (kbRoot: string): void => {
   try {
