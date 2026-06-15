@@ -204,6 +204,10 @@ const runRoots = async (verb: string, argv: string[], dryRun: boolean): Promise<
     return
   }
   const globalLinkMap = (): Record<string, string> => buildLinkMap(roots.flatMap((r) => publishOrder(kbRoot, r.subtree, s, discover(kbRoot, r.subtree, s))))
+  // One root's own notes — overlaid on the global map so a bare [[Name]] that
+  // collides across roots resolves to THIS root's note, not whichever root sorts
+  // last in the global map. Mirrors the MCP tree-update default.
+  const localLinkMap = (subtree: string): Record<string, string> => buildLinkMap(discover(kbRoot, subtree, s))
 
   for (const r of roots) {
     const desc = r.parent.type === 'database_id' ? `db ${r.parent.database_id}` : `page ${r.parent.page_id}`
@@ -211,19 +215,21 @@ const runRoots = async (verb: string, argv: string[], dryRun: boolean): Promise<
     if (verb === 'touch' || verb === 'publish') await touchTree(cfg, r.subtree, r.parent, s, undefined, liveProgress())
   }
   if (verb === 'update' || verb === 'publish') {
-    const linkMap = globalLinkMap() // one map across ALL roots → cross-root wikilinks resolve
+    const global = globalLinkMap() // cross-root wikilinks resolve; local overlay (below) wins on bare-name collisions
     for (const r of roots) {
       console.log(`\n########## update ${r.subtree} ##########`)
+      const linkMap = { ...global, ...localLinkMap(r.subtree) }
       await updateTree(cfg, r.subtree, r.parent, s, { linkMap, force: argv.includes('--force'), verify: argv.includes('--verify'), onProgress: liveProgress() })
     }
   }
   if (verb === 'baseline') {
     // Stamp every root with ONE shared timestamp so the whole baseline shares a clock.
-    const linkMap = globalLinkMap()
+    const global = globalLinkMap()
     const publishedAt = nowStamp()
     const skip = new Set(flagValues(argv, '--skip'))
     for (const r of roots) {
       console.log(`\n########## baseline ${r.subtree} ##########`)
+      const linkMap = { ...global, ...localLinkMap(r.subtree) }
       printOutcomes((await baselineTree(cfg, r.subtree, r.parent, s, { linkMap, publishedAt, skip })).outcomes)
     }
   }
