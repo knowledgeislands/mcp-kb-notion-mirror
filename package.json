@@ -94,6 +94,7 @@
     "lint:fix": "bunx @biomejs/biome check --write --unsafe",
     "lint:format": "bunx @biomejs/biome format --write",
     "lint:md": "bunx prettier --write \"**/*.md\" --ignore-path .gitignore && bunx markdownlint-cli2",
+    "lint:md:check": "bunx prettier --check \"**/*.md\" --ignore-path .gitignore && bunx markdownlint-cli2",
     "lint:package": "bunx syncpack format",
     "lint:types": "tsc --noEmit",
     "prepare": "husky",
