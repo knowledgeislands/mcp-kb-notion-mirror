@@ -12,7 +12,8 @@ cd mcp-kb-notion-mirror
 bun install
 ```
 
-`bun install` triggers `prepare` which configures the husky pre-commit hook — so every commit will auto-run `lint-staged` and format your changes.
+`bun install` triggers `prepare` which configures the husky pre-commit hook — so every commit will auto-run `lint-staged` and format your
+changes.
 
 ## Dev loop
 
@@ -29,26 +30,39 @@ bun run lint:md             # prettier + markdownlint for *.md
 bun run build               # tsc -p tsconfig.build.json → dist/
 ```
 
-You'll need a Notion internal-integration secret in `MCP_KB_NOTION_MIRROR_TOKEN` and a KB root in `MCP_KB_NOTION_MIRROR_KB_ROOT` for any live publishing — see [README.md](./README.md#setup). The `subtree` to mirror and the Notion `parent` it attaches under are passed per call (tool args / CLI flags), not via env. Unit tests need none of this: the Notion client is exercised through `fetch` mocks and config is injected via `loadConfig(env)` literals.
+You'll need a Notion internal-integration secret in `MCP_KB_NOTION_MIRROR_TOKEN` and a KB root in `MCP_KB_NOTION_MIRROR_KB_ROOT` for any
+live publishing — see [README.md](./README.md#setup). The `subtree` to mirror and the Notion `parent` it attaches under are passed per call
+(tool args / CLI flags), not via env. Unit tests need none of this: the Notion client is exercised through `fetch` mocks and config is
+injected via `loadConfig(env)` literals.
 
 ## Conventions
 
 ### Code
 
-- **TypeScript ES modules** — `"type": "module"`, internal imports use `.js` extensions (e.g. `from '../notion-client/index.js'`) so `tsc` emits valid JS.
+- **TypeScript ES modules** — `"type": "module"`, internal imports use `.js` extensions (e.g. `from '../notion-client/index.js'`) so `tsc`
+  emits valid JS.
 - **Arrow functions** for top-level declarations (`export const foo = () => …`).
-- **Config is injected, not imported as a singleton** — `loadConfig()` (in `src/config/index.ts`) builds a `Config`; `main/` functions take it (or its needed slice) as the first arg. Nothing reads env at import time.
-- **No bare `fetch`** in tool callbacks — go through `src/main/notion-client/index.ts` so auth, the `Notion-Version` header, encoding, the 100-block chunking, and error translation stay centralised.
-- **No bare `fs.*` on a user path** — resolve through `src/utils/paths.ts` first (`resolveKbNotePath(kbRoot, kbPath)`), for both `kb_path` and `subtree`. Write-backs go through `atomicWriteFile`.
-- **Nothing reachable from a tool writes to stdout** — the MCP speaks JSON-RPC over stdout. The `src/main/` library returns structured data and never logs; only `src/cli/cli.ts` (not a tool) prints.
-- **No YAML round-trip** — edit frontmatter by line surgery in `src/main/mirror/frontmatter.ts`; a YAML library would reorder keys and rewrite escaping.
-- **Input validation**: every `kb_path` / `root` carries the `..`-rejecting refine and a length bound. Notion ids are validated with `normalizeId` before hitting an API path. New schemas must continue this.
-- **Errors**: tools return MCP errors via `errorResult(...)`; structured results via `jsonResult(...)`. Never `throw` from a tool callback — the audit-log wrapper depends on the MCP `isError` envelope.
-- **Annotations**: be honest with `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint` on every tool registration. Use a preset from `src/utils/annotations.ts`.
+- **Config is injected, not imported as a singleton** — `loadConfig()` (in `src/config/index.ts`) builds a `Config`; `main/` functions take
+  it (or its needed slice) as the first arg. Nothing reads env at import time.
+- **No bare `fetch`** in tool callbacks — go through `src/main/notion-client/index.ts` so auth, the `Notion-Version` header, encoding, the
+  100-block chunking, and error translation stay centralised.
+- **No bare `fs.*` on a user path** — resolve through `src/utils/paths.ts` first (`resolveKbNotePath(kbRoot, kbPath)`), for both `kb_path`
+  and `subtree`. Write-backs go through `atomicWriteFile`.
+- **Nothing reachable from a tool writes to stdout** — the MCP speaks JSON-RPC over stdout. The `src/main/` library returns structured data
+  and never logs; only `src/cli/cli.ts` (not a tool) prints.
+- **No YAML round-trip** — edit frontmatter by line surgery in `src/main/mirror/frontmatter.ts`; a YAML library would reorder keys and
+  rewrite escaping.
+- **Input validation**: every `kb_path` / `root` carries the `..`-rejecting refine and a length bound. Notion ids are validated with
+  `normalizeId` before hitting an API path. New schemas must continue this.
+- **Errors**: tools return MCP errors via `errorResult(...)`; structured results via `jsonResult(...)`. Never `throw` from a tool callback —
+  the audit-log wrapper depends on the MCP `isError` envelope.
+- **Annotations**: be honest with `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint` on every tool registration. Use a
+  preset from `src/utils/annotations.ts`.
 
 ### Commits
 
-This repo uses [Conventional Commits](https://www.conventionalcommits.org/) so version bumps are easy to derive when releasing by hand. There is no auto-release pipeline.
+This repo uses [Conventional Commits](https://www.conventionalcommits.org/) so version bumps are easy to derive when releasing by hand.
+There is no auto-release pipeline.
 
 | Type        | What it means           | Bumps |
 | ----------- | ----------------------- | ----- |
@@ -67,7 +81,9 @@ Add `!` for breaking changes (`feat!:` / `fix!:`) — bumps major.
 
 ### Testing
 
-- New code ships with tests. Vitest is configured with V8 coverage and **100% thresholds** (line/branch/function/statement) — the aggregator `index.ts` files, `src/cli/cli.ts`, and the pure-data `src/utils/annotations.ts` + `src/utils/notion-args.ts` are excluded; everything else (including the `src/main/` library, e.g. `main/trees/discover.ts`) must stay fully covered.
+- New code ships with tests. Vitest is configured with V8 coverage and **100% thresholds** (line/branch/function/statement) — the aggregator
+  `index.ts` files, `src/cli/cli.ts`, and the pure-data `src/utils/annotations.ts` + `src/utils/notion-args.ts` are excluded; everything
+  else (including the `src/main/` library, e.g. `main/trees/discover.ts`) must stay fully covered.
 - The Notion client is exercised through `fetch` mocks (`vi.stubGlobal('fetch', …)`), not a real network.
 - Frontmatter parsing/writing has round-trip exact-string fixtures — a reformatting regression fails the test.
 
@@ -78,6 +94,7 @@ Add `!` for breaking changes (`feat!:` / `fix!:`) — bumps major.
 - [ ] `bun run test:coverage` passes (no threshold failures)
 - [ ] `bun run build` passes
 - [ ] Commit messages follow Conventional Commits
-- [ ] If you added a new tool, update `README.md`'s Tools section, `CLAUDE.md`'s tool registration call sites note, and `scripts/smoke.ts`'s `EXPECTED_TOOLS`
+- [ ] If you added a new tool, update `README.md`'s Tools section, `CLAUDE.md`'s tool registration call sites note, and `scripts/smoke.ts`'s
+      `EXPECTED_TOOLS`
 
 CI runs lint, types, and coverage on every PR.
