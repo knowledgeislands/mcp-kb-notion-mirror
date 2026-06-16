@@ -67,5 +67,18 @@ describe('markdown helpers', () => {
       const code = blocks.find((b) => b.type === 'code') as never
       expect(contentOf(code, 'code')).toBe('line one\nline two')
     })
+
+    it('walks table-row cells, folding soft breaks within each cell', () => {
+      type Cell = Array<{ text?: { content?: string } }>
+      type TableRow = { type: string; table_row?: { cells?: Cell[] } }
+      const table = bodyToBlocks('| Col A | Col B |\n| --- | --- |\n| one | two |\n').find((b): b is { type: string; table: { children: TableRow[] } } => (b as { type?: string }).type === 'table')
+      const cellText = (rows: TableRow[] | undefined): string[][] => (rows ?? []).map((r) => (r.table_row?.cells ?? []).map((cell) => cell.map((run) => run.text?.content ?? '').join('')))
+      // The `cells` branch of collapseSoftBreaks ran on every row (header + body),
+      // leaving cell content intact.
+      expect(cellText(table?.table.children)).toEqual([
+        ['Col A', 'Col B'],
+        ['one', 'two']
+      ])
+    })
   })
 })
