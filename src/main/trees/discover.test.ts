@@ -11,7 +11,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { NotionParent } from '../notion-client/index.js'
-import { buildLinkMap, discover, iconFor, indexKbPathFor, publishOrder, readFrontmatter, resolveParent } from './discover.js'
+import { buildLinkMap, discover, iconFor, indexKbPathFor, MAX_WALK_DEPTH, publishOrder, readFrontmatter, resolveParent } from './discover.js'
 import type { MirrorSettings } from './settings.js'
 
 const PAGE_ID = '3709f7187cc281dd9a32c190c3eaf8b6'
@@ -145,6 +145,31 @@ describe('tree FS layer', () => {
         .sort()
       expect(found).toEqual(['Alpha/Alpha.md', 'Alpha/PrivateNotes/PrivateNotes.md'])
     })
+
+    it('never walks into a node_modules directory under the subtree', async () => {
+      await write('Alpha/Alpha.md', fm({}))
+      await write('Alpha/node_modules/dep/Dep.md', fm({})) // stray install → must be skipped
+      const found = discover(kbRoot, SUBTREE, s).map((n) => n.kbPath)
+      expect(found).toEqual(['Alpha/Alpha.md'])
+    })
+
+    it('stops descending at MAX_WALK_DEPTH (notes past the cap are not discovered)', async () => {
+      // Build MAX_WALK_DEPTH + 2 nested folders, each with an index note. The walk
+      // increments depth per directory it descends into and stops once depth hits
+      // the cap, so the deepest indexes beyond the cap are never read.
+      const segments = Array.from({ length: MAX_WALK_DEPTH + 2 }, (_, i) => `L${i}`)
+      let rel = 'Deep'
+      await write('Deep/Deep.md', fm({}))
+      for (const seg of segments) {
+        rel = path.join(rel, seg)
+        await write(path.join(rel, `${seg}.md`), fm({}))
+      }
+      const found = discover(kbRoot, 'Deep', s).map((n) => n.kbPath)
+      // The very deepest note sits past the cap → excluded; the walk did not throw.
+      const deepestRel = path.join(rel, `${segments[segments.length - 1]}.md`)
+      expect(found).not.toContain(deepestRel)
+      expect(found).toContain('Deep/Deep.md')
+    })
   })
 
   describe('publishOrder', () => {
@@ -167,6 +192,21 @@ describe('tree FS layer', () => {
       await write('Alpha/Empty/Deeper/Deeper.md', fm({}))
       const ordered = publishOrder(kbRoot, SUBTREE, s, discover(kbRoot, SUBTREE, s)).map((n) => n.kbPath)
       expect(ordered).toEqual(['Alpha/Alpha.md', 'Alpha/Empty/Deeper/Deeper.md', 'Alpha/Orphans/Stray.md'])
+    })
+
+    it('stops its own recursion at MAX_WALK_DEPTH without throwing', async () => {
+      // publishOrder re-walks the FS to order sub-folders; its `visit` carries the
+      // same depth guard. A tree past the cap must order cleanly (cutoff at line 150).
+      const segments = Array.from({ length: MAX_WALK_DEPTH + 2 }, (_, i) => `L${i}`)
+      let rel = 'Deep'
+      await write('Deep/Deep.md', fm({}))
+      for (const seg of segments) {
+        rel = path.join(rel, seg)
+        await write(path.join(rel, `${seg}.md`), fm({}))
+      }
+      const ordered = publishOrder(kbRoot, 'Deep', s, discover(kbRoot, 'Deep', s)).map((n) => n.kbPath)
+      expect(ordered[0]).toBe('Deep/Deep.md')
+      expect(ordered).not.toContain(path.join(rel, `${segments[segments.length - 1]}.md`))
     })
   })
 

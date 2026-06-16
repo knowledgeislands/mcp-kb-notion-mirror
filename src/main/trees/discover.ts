@@ -55,13 +55,31 @@ export const readFrontmatter = (content: string): Record<string, string> => {
   return out
 }
 
-export const walkMd = function* (dir: string): Generator<string> {
+/**
+ * Hard cap on FS-walk recursion depth, shared by every tree/roots walk in this
+ * server (exported so prune + roots reuse the same guard). A KB nested deeper
+ * than this is pathological; we stop descending past it rather than risk a stack
+ * blow-up or a runaway walk on a cyclic/symlinked tree. Depth starts at 0 at each
+ * walk's root. Mirrors mcp-kb-fs.
+ */
+export const MAX_WALK_DEPTH = 32
+
+/**
+ * Directory names never walked into: `node_modules` is large and never part of a
+ * KB tree, so a stray install under the KB root must not be traversed. Dotfolders
+ * are pruned separately at each call site.
+ */
+export const isUnwalkableDir = (name: string): boolean => name === 'node_modules'
+
+export const walkMd = function* (dir: string, depth = 0): Generator<string> {
   for (const name of readdirSync(dir)) {
     if (name.startsWith('.')) continue // skip .git, .obsidian, .DS_Store, …
+    if (isUnwalkableDir(name)) continue
     const full = join(dir, name)
     const st = statSync(full)
-    if (st.isDirectory()) yield* walkMd(full)
-    else if (st.isFile() && name.endsWith('.md')) yield full
+    if (st.isDirectory()) {
+      if (depth < MAX_WALK_DEPTH) yield* walkMd(full, depth + 1)
+    } else if (st.isFile() && name.endsWith('.md')) yield full
   }
 }
 
@@ -123,17 +141,18 @@ export const publishOrder = (kbRoot: string, subtree: string, _s: MirrorSettings
   }
   const rootPath = join(kbRoot, subtree)
   const out: Note[] = []
-  const visit = (dir: string): void => {
+  const visit = (dir: string, depth = 0): void => {
     const here = byDir.get(dir) ?? []
     const idx = here.find((n) => n.isIndex)
     const leaves = here.filter((n) => !n.isIndex).sort((a, b) => a.base.localeCompare(b.base))
     if (idx) out.push(idx)
     for (const l of leaves) out.push(l)
+    if (depth >= MAX_WALK_DEPTH) return
     const subs = readdirSync(dir, { withFileTypes: true })
-      .filter((e) => e.isDirectory())
+      .filter((e) => e.isDirectory() && !e.name.startsWith('.') && !isUnwalkableDir(e.name))
       .map((e) => join(dir, e.name))
       .sort()
-    for (const sub of subs) visit(sub)
+    for (const sub of subs) visit(sub, depth + 1)
   }
   visit(rootPath)
   return out

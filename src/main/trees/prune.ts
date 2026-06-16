@@ -22,7 +22,7 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Config } from '../../config/index.js'
 import { archivePage, extractPageIdFromUrl } from '../notion-client/index.js'
-import { readFrontmatter } from './discover.js'
+import { isUnwalkableDir, MAX_WALK_DEPTH, readFrontmatter } from './discover.js'
 import type { NoteOutcome, TreeResult } from './index.js'
 import type { MirrorSettings } from './settings.js'
 
@@ -71,12 +71,13 @@ export const urlFromBlob = (kbRoot: string, ref: string): string | undefined => 
  */
 const liveUrls = (kbRoot: string, s: MirrorSettings): Set<string> => {
   const set = new Set<string>()
-  const walk = (dir: string): void => {
+  const walk = (dir: string, depth = 0): void => {
     for (const e of readdirSync(dir, { withFileTypes: true })) {
       if (e.name.startsWith('.')) continue
       if (e.isDirectory()) {
+        if (isUnwalkableDir(e.name)) continue
         if (s.skipPrefixes.some((p) => e.name.startsWith(p))) continue
-        walk(join(dir, e.name))
+        if (depth < MAX_WALK_DEPTH) walk(join(dir, e.name), depth + 1)
       } else if (e.name.endsWith('.md')) {
         const url = readFrontmatter(readFileSync(join(dir, e.name), 'utf-8')).kb_notion_mirror_url
         if (url) set.add(url.trim())

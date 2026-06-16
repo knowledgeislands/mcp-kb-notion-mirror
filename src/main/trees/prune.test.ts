@@ -16,6 +16,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { type Config, DEFAULT_BANNER_TEMPLATE } from '../../config/index.js'
+import { MAX_WALK_DEPTH } from './discover.js'
 import { pruneRoots, pruneTree, selectOrphans } from './index.js'
 import { urlFromBlob } from './prune.js'
 import type { MirrorSettings } from './settings.js'
@@ -169,6 +170,30 @@ describe('prune', () => {
     const res = await pruneTree(cfg, 'Gamma', s, { dryRun: true })
     expect(res.eligible).toBe(2)
     expect(new Set(res.outcomes.map((o) => o.url))).toEqual(new Set([noteUrl(11), noteUrl(12)]))
+  })
+
+  it('ignores live urls under node_modules and below MAX_WALK_DEPTH when deciding orphans', async () => {
+    // A committed deletion carrying noteUrl(20). The SAME url is re-introduced by
+    // notes that liveUrls must NOT walk: one under node_modules, one nested past
+    // the depth cap. If either were treated as live the deletion would read as a
+    // move and be skipped — so both must be excluded for it to remain an orphan.
+    git('init', '-q')
+    git('config', 'user.email', 't@example.com')
+    git('config', 'user.name', 'Tester')
+    git('config', 'commit.gpgsign', 'false')
+    await write('Alpha/Alpha.md', fm({ kb_notion_mirror_url: noteUrl(19) })) // keeps subtree non-empty
+    await write('Alpha/Gone.md', fm({ kb_notion_mirror_url: noteUrl(20) }))
+    git('add', '-A')
+    git('commit', '-qm', 'c1')
+    await fsp.rm(path.join(kbRoot, 'Alpha/Gone.md')) // working-tree deletion → candidate orphan
+    // Decoy live copies of the deleted url that liveUrls must skip:
+    await write('Alpha/node_modules/pkg/Copy.md', fm({ kb_notion_mirror_url: noteUrl(20) }))
+    const deepRel = Array.from({ length: MAX_WALK_DEPTH + 2 }, (_, i) => `D${i}`).reduce((acc, seg) => path.join(acc, seg), 'Alpha')
+    await write(path.join(deepRel, 'Deep.md'), fm({ kb_notion_mirror_url: noteUrl(20) }))
+
+    const res = await pruneTree(cfg, 'Alpha', s, { dryRun: true })
+    expect(res.eligible).toBe(1)
+    expect(res.outcomes).toEqual([{ kbPath: 'Alpha/Gone.md', action: 'plan', url: noteUrl(20) }])
   })
 
   it('pruneRoots scans the whole KB and archives orphans when not a dry run', async () => {

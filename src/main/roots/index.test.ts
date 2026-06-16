@@ -12,6 +12,7 @@ import * as fsp from 'node:fs/promises'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { MAX_WALK_DEPTH } from '../trees/discover.js'
 import type { MirrorSettings } from '../trees/settings.js'
 import { buildGlobalLinkMap, discoverRoots, listRoots } from './index.js'
 
@@ -87,6 +88,28 @@ describe('discoverRoots', () => {
 
   it('returns [] when no roots are declared', async () => {
     await write('Alpha/Alpha.md', fm({ icon: 'box' }))
+    expect(discoverRoots(kbRoot, s)).toEqual([])
+  })
+
+  it('never walks into a node_modules directory when hunting for roots', async () => {
+    await write('Alpha/Alpha.md', fm({ kb_notion_mirror_root: DB_ID }))
+    // A declared root buried inside node_modules must be invisible to discovery.
+    await write('node_modules/pkg/pkg.md', fm({ kb_notion_mirror_root: DB_ID }))
+    expect(discoverRoots(kbRoot, s).map((r) => r.subtree)).toEqual(['Alpha'])
+  })
+
+  it('stops descending at MAX_WALK_DEPTH (a root past the cap is not discovered)', async () => {
+    // A root declared deeper than the cap is never reached; the walk does not throw.
+    const segments = Array.from({ length: MAX_WALK_DEPTH + 2 }, (_, i) => `L${i}`)
+    let rel = 'Deep'
+    await write('Deep/Deep.md', fm({ icon: 'box' })) // non-root index → descend
+    for (const seg of segments.slice(0, -1)) {
+      rel = path.join(rel, seg)
+      await write(path.join(rel, `${seg}.md`), fm({ icon: 'box' }))
+    }
+    const last = segments[segments.length - 1] as string
+    rel = path.join(rel, last)
+    await write(path.join(rel, `${last}.md`), fm({ kb_notion_mirror_root: DB_ID })) // past the cap
     expect(discoverRoots(kbRoot, s)).toEqual([])
   })
 

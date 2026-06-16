@@ -22,7 +22,7 @@
 import { existsSync, readdirSync } from 'node:fs'
 import { basename, join, relative } from 'node:path'
 import type { NotionParent } from '../notion-client/index.js'
-import { buildLinkMap, discover, isEligible, loadNote, type Note } from '../trees/discover.js'
+import { buildLinkMap, discover, isEligible, isUnwalkableDir, loadNote, MAX_WALK_DEPTH, type Note } from '../trees/discover.js'
 import type { MirrorSettings } from '../trees/settings.js'
 
 /** A folder declared as a mirror root via `kb_notion_mirror_root` frontmatter. */
@@ -63,9 +63,10 @@ const rootValueOf = (n: Note): string | undefined => {
  */
 export const discoverRoots = (kbRoot: string, s: MirrorSettings): MirrorRoot[] => {
   const roots: MirrorRoot[] = []
-  const visit = (dir: string): void => {
+  const visit = (dir: string, depth = 0): void => {
     for (const e of readdirSync(dir, { withFileTypes: true })) {
       if (!e.isDirectory() || e.name.startsWith('.')) continue
+      if (isUnwalkableDir(e.name)) continue
       const folder = join(dir, e.name)
       const idx = indexNoteOf(kbRoot, folder)
       if (idx) {
@@ -79,7 +80,7 @@ export const discoverRoots = (kbRoot: string, s: MirrorSettings): MirrorRoot[] =
       } else if (s.skipPrefixes.some((p) => e.name.startsWith(p))) {
         continue // index-less skip-prefixed folder → prune (optimiser)
       }
-      visit(folder)
+      if (depth < MAX_WALK_DEPTH) visit(folder, depth + 1)
     }
   }
   visit(kbRoot)
