@@ -183,6 +183,30 @@ describe('appendAuditEvent / withAuditLog (mcp-kb-notion-mirror)', () => {
     await expect(fs.access(`${logPath}.1`)).rejects.toThrow()
   })
 
+  it('redacts URL credentials throughout the args (string, array, nested object) and preserves primitives', async () => {
+    const { withAuditLog } = await import('./audit-log.js')
+    const wrapped = withAuditLog(auditCfg({ mode: 'all' }), 'kb_notion_mirror_note_get', 'read', async () => ({ content: [{ type: 'text', text: 'ok' }] }))
+    await wrapped({
+      url: 'https://user:hunter2@notion.example.com/path',
+      list: ['postgres://admin:s3cret@db.example.com/kb'],
+      nested: { inner: 'redis://token@cache.example.com' },
+      count: 42, // primitive — passes through the final return branch untouched
+      flag: true
+    })
+    await flushAsync()
+    const line = (await fs.readFile(logPath, 'utf-8')).trim()
+    expect(line).toContain('<redacted>')
+    expect(line).not.toContain('hunter2')
+    expect(line).not.toContain('s3cret')
+    expect(line).not.toContain('token@cache')
+    const event = JSON.parse(line)
+    expect(event.args.url).toBe('https://<redacted>@notion.example.com/path')
+    expect(event.args.list[0]).toBe('postgres://<redacted>@db.example.com/kb')
+    expect(event.args.nested.inner).toBe('redis://<redacted>@cache.example.com')
+    expect(event.args.count).toBe(42)
+    expect(event.args.flag).toBe(true)
+  })
+
   it('silently absorbs write failures (writes to a non-writable parent)', async () => {
     const badPath = path.join(tmpDir, 'no-perms', 'audit.jsonl')
     await fs.mkdir(path.dirname(badPath), { recursive: true })
