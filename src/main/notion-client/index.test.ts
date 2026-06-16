@@ -226,6 +226,25 @@ describe('notion-client (mcp-kb-notion-mirror)', () => {
       fetchMock.mockResolvedValueOnce(new Response('not json', { status: 200 }))
       await expect(getDatabase(cfg, DB_ID)).rejects.toThrow(/non-JSON body/)
     })
+
+    it('maps an AbortSignal.timeout rejection (TimeoutError) to a NotionApiError with code "timeout"', async () => {
+      const timeout = Object.assign(new Error('The operation timed out.'), { name: 'TimeoutError' })
+      fetchMock.mockRejectedValueOnce(timeout)
+      const err = await getDatabase(cfg, DB_ID).catch((e) => e)
+      expect(err).toBeInstanceOf(NotionApiError)
+      expect(err.code).toBe('timeout')
+      expect(err.status).toBe(0)
+      expect(err.message).toMatch(/timed out after 60000ms/)
+      expect(err.message).not.toContain('ntn_secrettoken')
+    })
+
+    it('rethrows a non-timeout fetch rejection unchanged', async () => {
+      const network = new Error('network unreachable')
+      fetchMock.mockRejectedValueOnce(network)
+      const err = await getDatabase(cfg, DB_ID).catch((e) => e)
+      expect(err).toBe(network)
+      expect(err).not.toBeInstanceOf(NotionApiError)
+    })
   })
 
   describe('pure helpers', () => {

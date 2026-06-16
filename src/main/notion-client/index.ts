@@ -37,12 +37,28 @@ const headers = (cfg: NotionConfig): Record<string, string> => ({
   'Content-Type': 'application/json'
 })
 
+/**
+ * Per-request network budget. A hung Notion connection must not pin a tool call
+ * indefinitely — touch/update loops over many pages — so every request aborts
+ * after this. Generous enough that a slow-but-progressing call still completes.
+ */
+const NOTION_REQUEST_TIMEOUT_MS = 60_000
+
 const request = async <T>(cfg: NotionConfig, method: 'GET' | 'POST' | 'PATCH' | 'DELETE', apiPath: string, body?: unknown): Promise<T> => {
-  const resp = await fetch(`${cfg.notionApiBaseUrl}${apiPath}`, {
-    method,
-    headers: headers(cfg),
-    body: body === undefined ? undefined : JSON.stringify(body)
-  })
+  let resp: Response
+  try {
+    resp = await fetch(`${cfg.notionApiBaseUrl}${apiPath}`, {
+      method,
+      headers: headers(cfg),
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.timeout(NOTION_REQUEST_TIMEOUT_MS)
+    })
+  } catch (err) {
+    if ((err as { name?: string } | null)?.name === 'TimeoutError') {
+      throw new NotionApiError(0, '', 'timeout', `Notion ${method} ${apiPath} timed out after ${NOTION_REQUEST_TIMEOUT_MS}ms`)
+    }
+    throw err
+  }
   const text = await resp.text()
   if (!resp.ok) {
     let code: string | undefined
