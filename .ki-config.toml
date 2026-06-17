@@ -9,3 +9,7 @@ visibility = "public"   # "public" | "private"
 [knowledgeislands-engineering]
 # This repo fully conforms, so it declares no check overrides. To diverge, add a
 # [knowledgeislands-engineering.checks] table with one boolean per check (true = enforce).
+
+# Read by the knowledgeislands-mcp skill (the workspace-MCP server standard).
+# Presence opts this repo into the MCP standard; it takes no per-repo keys today.
+[knowledgeislands-mcp]
