@@ -49,6 +49,24 @@ const pruneInput = z
   })
   .strict()
 
+const noteOutcomeSchema = z.object({
+  kbPath: z.string(),
+  action: z.string(),
+  url: z.string().optional(),
+  error: z.string().optional()
+})
+
+const treeResultOutput = z.object({ eligible: z.number(), outcomes: z.array(noteOutcomeSchema) })
+
+const treeStatusOutput = z.object({
+  total: z.number(),
+  published: z.number(),
+  pending: z.number(),
+  notes: z.array(z.object({ kbPath: z.string(), published: z.boolean() }))
+})
+
+const treePreflightOutput = z.object({ issues: z.array(z.string()) })
+
 /**
  * Confine a kb-relative folder/note path under `cfg.kbRoot`, returning the
  * realpath. Reuses the per-note guard (lexical `..` reject + symlink realpath
@@ -72,6 +90,7 @@ Args:
 
 Returns: { total, published, pending, notes: [{ kbPath, published }] }. Pure read — no Notion call, no file change.`,
       inputSchema: statusInput,
+      outputSchema: treeStatusOutput,
       annotations: READ_ONLY_REMOTE
     },
     async ({ subtree }) => {
@@ -96,6 +115,7 @@ Args:
 
 Returns: { issues: string[] } — empty when the subtree is mirror-ready. Pure read.`,
       inputSchema: preflightInput,
+      outputSchema: treePreflightOutput,
       annotations: READ_ONLY_REMOTE
     },
     async ({ subtree }) => {
@@ -122,6 +142,7 @@ Args:
 
 Returns: { eligible, outcomes: NoteOutcome[] } where NoteOutcome = { kbPath, action: "touch"|"skip"|"error", url?, error? }.`,
       inputSchema: touchInput,
+      outputSchema: treeResultOutput,
       annotations: WRITE_REMOTE_IDEMPOTENT
     },
     async ({ subtree, parent, kb_path }) => {
@@ -150,6 +171,7 @@ Args:
 
 Returns: { eligible, outcomes: NoteOutcome[] } where NoteOutcome = { kbPath, action: "update"|"skip"|"error", url?, error? }.`,
       inputSchema: updateInput,
+      outputSchema: treeResultOutput,
       annotations: WRITE_REMOTE_IDEMPOTENT
     },
     async ({ subtree, parent, kb_path, link_map }) => {
@@ -177,6 +199,7 @@ Args:
 
 Returns: { eligible, outcomes: NoteOutcome[] } where NoteOutcome = { kbPath, action: "delete"|"plan"|"skip"|"error", url?, error? }.`,
       inputSchema: deleteInput,
+      outputSchema: treeResultOutput,
       annotations: DESTRUCTIVE_REMOTE
     },
     async ({ subtree, kb_path, dry_run }) => {
@@ -203,6 +226,7 @@ Args:
 
 Returns: { eligible, outcomes: NoteOutcome[] } where NoteOutcome = { kbPath (the deleted note's path), action: "plan"|"delete"|"error", url?, error? }.`,
       inputSchema: pruneInput,
+      outputSchema: treeResultOutput,
       annotations: DESTRUCTIVE_REMOTE
     },
     async ({ subtree, dry_run }) => {

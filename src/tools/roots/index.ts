@@ -8,6 +8,14 @@ import { errorResult, jsonResult } from '../../utils/results.js'
 
 const listInput = z.object({}).strict()
 
+const rootsListOutput = z.array(
+  z.object({
+    subtree: z.string(),
+    indexKbPath: z.string(),
+    parent: z.record(z.string(), z.unknown())
+  })
+)
+
 export const registerRootsTools = (server: McpServer, cfg: Config, settings: MirrorSettings): void => {
   server.registerTool(
     'kb_notion_mirror_roots_list',
@@ -21,6 +29,7 @@ Args: none.
 
 Returns: [{ subtree, indexKbPath, parent }] sorted by subtree. A database parent is { type: "database_id", database_id }; a page parent is { type: "page_id", page_id }.`,
       inputSchema: listInput,
+      outputSchema: rootsListOutput,
       annotations: READ_ONLY_REMOTE
     },
     async () => {

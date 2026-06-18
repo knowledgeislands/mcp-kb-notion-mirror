@@ -2,6 +2,7 @@ import { errMessage } from './errors.js'
 
 export const jsonResult = (payload: unknown) => {
   return {
+    structuredContent: payload as Record<string, unknown>,
     content: [{ type: 'text' as const, text: JSON.stringify(payload, null, 2) }]
   }
 }

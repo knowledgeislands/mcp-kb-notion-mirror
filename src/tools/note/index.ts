@@ -45,6 +45,29 @@ const deleteInput = z
   })
   .strict()
 
+const notionParent = z.record(z.string(), z.unknown())
+
+const getNoteOutput = z.union([
+  z.object({ id: z.string(), parent: notionParent, title: z.string().nullable(), created_time: z.string(), last_edited_time: z.string(), archived: z.boolean(), url: z.string() }),
+  z.object({ exists: z.literal(false), reason: z.string() })
+])
+
+const statusNoteOutput = z.union([z.object({ published: z.literal(true), url: z.string(), published_at: z.string() }), z.object({ published: z.literal(false) })])
+
+const preflightNoteOutput = z.object({ ok: z.boolean(), issues: z.array(z.string()) })
+
+const touchNoteOutput = z.union([z.object({ url: z.string(), page_id: z.string(), published_at: z.string() }), z.object({ skipped: z.literal(true), existing_url: z.string() })])
+
+const updateNoteOutput = z.object({ url: z.string(), page_id: z.string(), updated_at: z.string() })
+
+const moveNoteOutput = z.object({ moved: z.literal(true), page_id: z.string(), previous_parent: notionParent, new_parent: notionParent })
+
+const deleteNoteOutput = z.union([
+  z.object({ dry_run: z.literal(true), would_archive_url: z.string(), would_archive_page_id: z.string(), would_clear_fields: z.array(z.string()) }),
+  z.object({ archived: z.literal(true), page_id: z.string(), url: z.string() }),
+  z.object({ archived: z.literal(false), reason: z.string() })
+])
+
 export const registerNoteTools = (server: McpServer, cfg: Config): void => {
   server.registerTool(
     'kb_notion_mirror_note_get',
@@ -63,6 +86,7 @@ Errors:
   - "Could not extract a 32-hex page id …" — the kb_notion_mirror_url is malformed.
   - "Notion GET /v1/pages/{id} → HTTP 404" — the page was deleted in Notion.`,
       inputSchema: getInput,
+      outputSchema: getNoteOutput,
       annotations: READ_ONLY_REMOTE
     },
     async ({ kb_path }) => {
@@ -85,6 +109,7 @@ Args:
 
 Returns: { published: true, url, published_at } | { published: false }.`,
       inputSchema: statusInput,
+      outputSchema: statusNoteOutput,
       annotations: READ_ONLY_REMOTE
     },
     async ({ kb_path }) => {
@@ -107,6 +132,7 @@ Args:
 
 Returns: { ok: boolean, issues: string[] } — empty issues when the note is mirror-ready.`,
       inputSchema: preflightInput,
+      outputSchema: preflightNoteOutput,
       annotations: READ_ONLY_REMOTE
     },
     async ({ kb_path }) => {
@@ -137,6 +163,7 @@ Returns:
 
 Side effect: when parent.type is "page_id", the parent's "Child Pages" footer is refreshed (mirror-only).`,
       inputSchema: touchInput,
+      outputSchema: touchNoteOutput,
       annotations: WRITE_REMOTE_IDEMPOTENT
     },
     async ({ kb_path, parent, icon }) => {
@@ -168,6 +195,7 @@ Errors:
   - "Note is not mirrored yet — call touch before update."
   - "Notion silently ignored the parent change in update mode …" — page-id ↔ database-id move attempted.`,
       inputSchema: updateInput,
+      outputSchema: updateNoteOutput,
       annotations: WRITE_REMOTE_IDEMPOTENT
     },
     async ({ kb_path, parent, icon, link_map }) => {
@@ -197,6 +225,7 @@ Errors:
   - "Note is not mirrored — cannot move."
   - "Notion silently ignored the parent change …" — page-id ↔ database-id move attempted.`,
       inputSchema: moveInput,
+      outputSchema: moveNoteOutput,
       annotations: WRITE_REMOTE_IDEMPOTENT
     },
     async ({ kb_path, parent }) => {
@@ -225,6 +254,7 @@ Returns:
   - dry_run false: { archived: true, page_id, url }.
   - note not mirrored: { archived: false, reason: "not-mirrored" }.`,
       inputSchema: deleteInput,
+      outputSchema: deleteNoteOutput,
       annotations: DESTRUCTIVE_REMOTE
     },
     async ({ kb_path, dry_run }) => {
