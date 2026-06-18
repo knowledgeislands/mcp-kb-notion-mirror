@@ -184,7 +184,7 @@ mcp-kb-notion-mirror-publish roots publish --dry-run
 ```
 
 `roots publish` is the only place the **cross-root multi-step** lives: it touches every declared root, then updates them all with one link
-map spanning every root so cross-root `[[wikilinks]]` resolve. It auto-loads `.env.local` and `.env` from the working directory. Parents are
+map spanning every root so cross-root `[[wikilinks]]` resolve. It auto-loads `.env.local` and `.env` from the package root. Parents are
 per-invocation flags (or, for `roots`, read from `kb_notion_mirror_root` frontmatter) — never from env.
 
 ## Access levels
@@ -268,8 +268,10 @@ bun run server:mcp:dev      # bun --watch, runs the server from TS source
 bun run server:mcp:inspect  # MCP Inspector against the TS source
 ```
 
-Both set `NODE_ENV=development`, so a local `.env.development` is auto-loaded. Copy [`.env.example`](./.env.example) to `.env.development`
-and fill in your token to get started.
+Both set `NODE_ENV=development`. The server hydrates `process.env` from the package root, highest precedence first: `.env.local`, then
+`.env.${NODE_ENV}` (here `.env.development`) when `NODE_ENV` is set, then `.env`. A var already in the environment (e.g. the MCP client's
+`env` block) always wins. Copy [`.env.example`](./.env.example) to `.env.development` (or `.env.local`, loaded in every mode) and fill in
+your token to get started.
 
 ## Frontmatter contract
 

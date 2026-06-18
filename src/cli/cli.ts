@@ -2,8 +2,9 @@
 /**
  * CLI entry: `mcp-kb-notion-mirror-publish <resource> <verb> [args] [flags]`.
  *
- * Loads `.env.local` and `.env` from cwd before reading process.env so the
- * standard Node runtime gets the same auto-load behaviour Bun gives for free.
+ * Loads `.env.local` and `.env` from the package root before reading
+ * process.env so the standard Node runtime gets the same auto-load behaviour
+ * Bun gives for free.
  * Then dispatches to the note/tree/roots library functions. ALL human-readable
  * printing happens here, from the structured values those functions return — the
  * library layer never writes to stdout/stderr.
@@ -17,6 +18,8 @@
  * touches every declared root, then updates them all with ONE link map spanning
  * every root so cross-root `[[wikilinks]]` resolve to @mentions.
  */
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { loadConfig } from '../config/index.js'
 import type { NotionParent } from '../main/notion-client/index.js'
 import {
@@ -42,15 +45,23 @@ import {
   updateTree
 } from './index.js'
 
-const tryLoadEnvFile = (path: string): void => {
+/**
+ * Package root, resolved from this module's own URL — NOT `process.cwd()`,
+ * which is wherever the shell happened to invoke the CLI from. This file sits
+ * two levels below the root (`dist/cli/cli.js` and `src/cli/cli.ts`), so
+ * `../..` is correct whether built or run from source.
+ */
+const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
+
+const tryLoadEnvFile = (file: string): void => {
   try {
-    process.loadEnvFile(path)
+    process.loadEnvFile(file)
   } catch {
     // not present — fine
   }
 }
-tryLoadEnvFile('.env.local')
-tryLoadEnvFile('.env')
+tryLoadEnvFile(path.join(PACKAGE_ROOT, '.env.local'))
+tryLoadEnvFile(path.join(PACKAGE_ROOT, '.env'))
 
 const USAGE = `Usage: mcp-kb-notion-mirror-publish <resource> <verb> [args] [flags]
 

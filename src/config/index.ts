@@ -1,12 +1,45 @@
 /**
  * Configuration loading. `loadConfig()` reads the environment (optionally
- * hydrated from a `.env.${NODE_ENV}` file) into a plain `Config` value that is
+ * hydrated from the package's `.env*` files) into a plain `Config` value that is
  * passed explicitly into every main call — so the same code runs as an MCP
  * server or from a standalone script. There is NO module-level config
  * singleton: nothing here is read at import time.
  */
 import * as os from 'node:os'
 import * as path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+/**
+ * Package root, resolved from this module's own URL — NOT `process.cwd()`,
+ * which is wherever the MCP host happened to launch `node dist/mcp-server/...`
+ * from. Both layouts put this file two levels below the root
+ * (`dist/config/index.js` and `src/config/index.ts`), so `../..` is correct
+ * whether built or run from source.
+ */
+const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
+
+/**
+ * Hydrate `process.env` from the package's `.env*` files, mirroring the set and
+ * precedence Bun auto-loads (highest first: `.env.local`, then
+ * `.env.${NODE_ENV}` if NODE_ENV is set, then `.env`). `process.loadEnvFile`
+ * never overwrites a key already present in `process.env`, so loading
+ * highest-precedence first means earlier files win — and any value injected by
+ * the host (e.g. the MCP client's `env` block) beats every file. Missing files
+ * are skipped silently; under Bun this is largely redundant with its own
+ * auto-load, which is fine.
+ */
+const hydrateEnvFromFiles = (): void => {
+  const files = ['.env.local']
+  if (process.env.NODE_ENV) files.push(`.env.${process.env.NODE_ENV}`)
+  files.push('.env')
+  for (const file of files) {
+    try {
+      process.loadEnvFile(path.join(PACKAGE_ROOT, file))
+    } catch {
+      // File absent or unreadable — skip; the value may come from the host env.
+    }
+  }
+}
 
 const expandHome = (p: string): string => (p === '~' ? os.homedir() : p.startsWith('~/') ? path.join(os.homedir(), p.slice(2)) : p)
 
@@ -138,14 +171,11 @@ const parseNotionApiBaseUrl = (raw: string | undefined): string => {
 
 /**
  * Load configuration from `env` (defaults to `process.env`, after attempting to
- * hydrate it from `.env.${NODE_ENV}`). Throws if a required var is missing.
+ * hydrate it from the package's `.env*` files). Throws if a required var is
+ * missing.
  */
 export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config => {
-  try {
-    process.loadEnvFile(`./.env.${process.env.NODE_ENV}`)
-  } catch {
-    // no .env present (or Bun, which auto-loads it) — that's fine
-  }
+  hydrateEnvFromFiles()
 
   return {
     notionToken: requireEnv(

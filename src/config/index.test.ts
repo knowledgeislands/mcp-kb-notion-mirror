@@ -223,3 +223,23 @@ describe('loadMirrorSettings', () => {
     }
   })
 })
+
+describe('hydrateEnvFromFiles (via loadConfig)', () => {
+  // Every loadConfig call hydrates process.env from the package's `.env*`
+  // files; that step branches on whether NODE_ENV is set. Exercise both arms.
+  // Values still come from the explicit env literal, so the observable
+  // contract is that hydration is NODE_ENV-agnostic and never throws.
+  it('loads regardless of whether NODE_ENV is set', async () => {
+    const { loadConfig } = await import('./index.js')
+    const original = process.env.NODE_ENV
+    try {
+      process.env.NODE_ENV = 'production'
+      expect(loadConfig({ MCP_KB_NOTION_MIRROR_TOKEN: 'ntn_env_set' }).notionToken).toBe('ntn_env_set')
+      delete process.env.NODE_ENV
+      expect(loadConfig({ MCP_KB_NOTION_MIRROR_TOKEN: 'ntn_env_unset' }).notionToken).toBe('ntn_env_unset')
+    } finally {
+      if (original === undefined) delete process.env.NODE_ENV
+      else process.env.NODE_ENV = original
+    }
+  })
+})
