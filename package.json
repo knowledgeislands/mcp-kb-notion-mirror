@@ -98,6 +98,7 @@
     "lint:package": "bunx syncpack format",
     "lint:types": "tsc --noEmit",
     "prepare": "husky",
+    "skills:link:project": "bun $HOME/.claude/skills/knowledgeislands-bootstrap/scripts/link-skills.ts",
     "server:mcp:dev": "NODE_ENV=development bun --watch src/mcp-server/index.ts",
     "server:mcp:inspect": "NODE_ENV=development bunx @modelcontextprotocol/inspector bun src/mcp-server/index.ts",
     "server:mcp:start": "bun run build && node dist/mcp-server/index.js",
