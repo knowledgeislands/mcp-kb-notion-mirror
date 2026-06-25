@@ -15,6 +15,8 @@ export default defineConfig({
       include: ['src/**/*.ts'],
       exclude: [
         'src/**/*.test.ts',
+        // Generated typed client — auto-produced by the mcporter codegen script.
+        'src/generated/**',
         // Server entry points and tool registration aggregators are pure
         // wiring (every line is `server.registerTool(...)`); their behaviour
         // is exercised by `bun run server:mcp:inspect` and smoke tests.
