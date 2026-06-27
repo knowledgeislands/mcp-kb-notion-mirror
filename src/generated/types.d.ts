@@ -1,7 +1,7 @@
-// Generated on 2026-06-24T14:59:12.932Z by @knowledgeislands/mcp-kb-notion-mirror@1.0.0
+// Generated on 2026-06-27T20:37:57.185Z by @knowledgeislands/mcp-kb-notion-mirror@1.0.0
 // Server: hnr-mcp-kb-notion-mirror
 // Source: /Users/krisbrown/.mcporter/mcporter.json
-// Transport: STDIO node /Users/krisbrown/kis/knowledgeislands/mcp-kb-notion-mirror/dist/mcp-server/index.js
+// Transport: STDIO /Users/krisbrown/.local/share/mise/installs/node/lts/bin/node /Users/krisbrown/kis/knowledgeislands/mcp-kb-notion-mirror/dist/mcp-server/index.js
 
 import type { CallResult } from 'mcporter'
 
@@ -47,7 +47,7 @@ export interface HnrMcpKbNotionMirrorTools {
    *                MCP_KB_NOTION_MIRROR_KB_ROOT; absolute paths must fall under it when set. ".."
    *                segments are rejected.
    */
-  kb_notion_mirror_note_preflight(kb_path: string): Promise<CallResult>
+  kb_notion_mirror_note_preflight(kb_path: string): Promise<object>
 
   /**
    * Create a body-less scaffold page (title + icon + banner) for one KB note under the parent you
@@ -106,7 +106,7 @@ export interface HnrMcpKbNotionMirrorTools {
    *                  [[…]] become Notion @mentions; unresolved ones render as italic text. Omit/empty →
    *                  all wikilinks italic.
    */
-  kb_notion_mirror_note_update(kb_path: string, parent: unknown, icon?: unknown, link_map?: Record<string, unknown>): Promise<CallResult>
+  kb_notion_mirror_note_update(kb_path: string, parent: unknown, icon?: unknown, link_map?: Record<string, unknown>): Promise<object>
 
   /**
    * Move an already-mirrored note's page under a caller-supplied parent. The page content and URL are
@@ -128,7 +128,7 @@ export interface HnrMcpKbNotionMirrorTools {
    * @param parent Notion parent object, passed to Notion verbatim: { type: "database_id", database_id }
    *               or { type: "page_id", page_id }. The caller decides which.
    */
-  kb_notion_mirror_note_move(kb_path: string, parent: unknown): Promise<CallResult>
+  kb_notion_mirror_note_move(kb_path: string, parent: unknown): Promise<object>
 
   /**
    * Archive the Notion page referenced by a note's kb_notion_mirror_url and clear the two mirror
@@ -166,7 +166,7 @@ export interface HnrMcpKbNotionMirrorTools {
    *                MCP_KB_NOTION_MIRROR_KB_ROOT. ".." segments are rejected and the path is confined
    *                under the KB root.
    */
-  kb_notion_mirror_tree_status(subtree: string): Promise<CallResult>
+  kb_notion_mirror_tree_status(subtree: string): Promise<object>
 
   /**
    * Check a KB subtree for structural issues that would force notes to be skipped — currently, folders
@@ -179,7 +179,7 @@ export interface HnrMcpKbNotionMirrorTools {
    *                MCP_KB_NOTION_MIRROR_KB_ROOT. ".." segments are rejected and the path is confined
    *                under the KB root.
    */
-  kb_notion_mirror_tree_preflight(subtree: string): Promise<CallResult>
+  kb_notion_mirror_tree_preflight(subtree: string): Promise<object>
 
   /**
    * Create body-less scaffold pages for a whole KB subtree (or one note within it), attaching the
@@ -202,7 +202,7 @@ export interface HnrMcpKbNotionMirrorTools {
    * @param kb_path? Optional single note (kb-relative) to act on, walking up its ancestor indexes. Omit
    *                 to act on the whole subtree.
    */
-  kb_notion_mirror_tree_touch(subtree: string, parent: unknown, kb_path?: string): Promise<CallResult>
+  kb_notion_mirror_tree_touch(subtree: string, parent: unknown, kb_path?: string): Promise<object>
 
   /**
    * Push the body of every touched note in a subtree (or one note within it), resolving [[wikilinks]]
@@ -230,7 +230,7 @@ export interface HnrMcpKbNotionMirrorTools {
    *                  resolve into @mentions even on a partial republish), with this subtree overlaid so
    *                  a bare [[Name]] that collides across roots still resolves locally.
    */
-  kb_notion_mirror_tree_update(subtree: string, parent: unknown, kb_path?: string, link_map?: Record<string, unknown>): Promise<CallResult>
+  kb_notion_mirror_tree_update(subtree: string, parent: unknown, kb_path?: string, link_map?: Record<string, unknown>): Promise<object>
 
   /**
    * Archive the mirror page of every note in a subtree (or one note's chain) and clear their mirror
@@ -252,7 +252,7 @@ export interface HnrMcpKbNotionMirrorTools {
    * @param dry_run? When true (default) report what would be archived without calling Notion or editing
    *                 notes.
    */
-  kb_notion_mirror_tree_delete(subtree: string, kb_path?: string, dry_run?: boolean): Promise<CallResult>
+  kb_notion_mirror_tree_delete(subtree: string, kb_path?: string, dry_run?: boolean): Promise<object>
 
   /**
    * Archive Notion pages whose backing KB note has been DELETED under a subtree. Git-driven: an orphan
@@ -273,7 +273,7 @@ export interface HnrMcpKbNotionMirrorTools {
    * @param dry_run? When true (default) report which orphaned pages would be archived without calling
    *                 Notion.
    */
-  kb_notion_mirror_tree_prune(subtree: string, dry_run?: boolean): Promise<CallResult>
+  kb_notion_mirror_tree_prune(subtree: string, dry_run?: boolean): Promise<object>
 
   /**
    * Discover every folder that declares itself a mirror root via kb_notion_mirror_root frontmatter, and
