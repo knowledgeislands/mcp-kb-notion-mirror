@@ -1,7 +1,7 @@
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { loadConfig, loadMirrorSettings } from './index.js'
+import { loadConfig, loadKbRoot, loadMirrorSettings } from './index.js'
 
 // loadConfig reads from the env object it's given, so tests pass explicit envs
 // (no process.env mutation, no module-reset dance).
@@ -222,6 +222,37 @@ describe('loadMirrorSettings', () => {
     } finally {
       if (prev === undefined) delete process.env.MCP_KB_NOTION_MIRROR_SKIP_PREFIXES
       else process.env.MCP_KB_NOTION_MIRROR_SKIP_PREFIXES = prev
+    }
+  })
+})
+
+// `loadKbRoot` is the standalone reader the CLI's local-only verbs use to read
+// just the KB root without requiring the Notion token that full `loadConfig` demands.
+describe('loadKbRoot', () => {
+  it('returns undefined when the var is unset', () => {
+    expect(loadKbRoot({})).toBeUndefined()
+  })
+
+  it('returns undefined when the var is blank', () => {
+    expect(loadKbRoot({ MCP_KB_NOTION_MIRROR_KB_ROOT: '   ' })).toBeUndefined()
+  })
+
+  it('expands ~/kb to an absolute path', () => {
+    expect(loadKbRoot({ MCP_KB_NOTION_MIRROR_KB_ROOT: '~/kb' })).toBe(path.join(os.homedir(), 'kb'))
+  })
+
+  it('passes an absolute path through unchanged', () => {
+    expect(loadKbRoot({ MCP_KB_NOTION_MIRROR_KB_ROOT: '/tmp/kb' })).toBe('/tmp/kb')
+  })
+
+  it('reads from process.env by default', () => {
+    const prev = process.env.MCP_KB_NOTION_MIRROR_KB_ROOT
+    process.env.MCP_KB_NOTION_MIRROR_KB_ROOT = '/tmp/default-env-kb'
+    try {
+      expect(loadKbRoot()).toBe('/tmp/default-env-kb')
+    } finally {
+      if (prev === undefined) delete process.env.MCP_KB_NOTION_MIRROR_KB_ROOT
+      else process.env.MCP_KB_NOTION_MIRROR_KB_ROOT = prev
     }
   })
 })
