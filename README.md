@@ -264,8 +264,8 @@ frontmatter. The Notion token is never written to logs, error messages, or tool 
 ## Running locally
 
 ```bash
-bun run server:mcp:dev      # bun --watch, runs the server from TS source
-bun run server:mcp:inspect  # MCP Inspector against the TS source
+bun run ki:server:mcp:dev      # bun --watch, runs the server from TS source
+bun run ki:server:mcp:inspect  # MCP Inspector against the TS source
 ```
 
 Both set `NODE_ENV=development`. The server hydrates `process.env` from the package root, highest precedence first: `.env.local`, then

@@ -12,10 +12,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: jdx/mise-action@v2
       - run: bun install --frozen-lockfile
-      - run: bun run lint:check
-      - run: bun run lint:types
-      - run: bun run lint:md:check
-      - run: bun run test:coverage
+      - run: bun run ki:verify
       - name: Upload coverage report
         if: always()
         uses: actions/upload-artifact@v7
@@ -26,4 +23,4 @@ jobs:
       # Smoke test: boots the built server and verifies the wire-level tool surface
       # matches the in-process registration tests. Runs after test:coverage so
       # unit-test failures surface first; test:smoke builds dist/ inline.
-      - run: bun run test:smoke
+      - run: bun run ki:test:smoke

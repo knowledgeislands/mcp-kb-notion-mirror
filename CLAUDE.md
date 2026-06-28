@@ -42,7 +42,7 @@ launches.
 - Bun auto-loads `.env.${NODE_ENV}` from the CWD; Node needs the explicit `process.loadEnvFile()` call inside `loadConfig()` in
   [src/config/index.ts](./src/config/index.ts). The try/catch swallows the `TypeError` Bun raises (no `process.loadEnvFile`), so the same
   code works under both.
-- `NODE_ENV` is set to `development` only by `server:mcp:dev` and `server:mcp:inspect`. Claude Desktop doesn't set it, so `.env.*` is
+- `NODE_ENV` is set to `development` only by `ki:server:mcp:dev` and `ki:server:mcp:inspect`. Claude Desktop doesn't set it, so `.env.*` is
   ignored in production — `MCP_KB_NOTION_MIRROR_TOKEN` must come from the Claude Desktop config `env` block.
 
 Run `bun run` with no args for the full script list.
@@ -109,9 +109,9 @@ link map — never a server tool.
 ### Naming convention
 
 Tool names follow `<app>_<resource>_<action>` (snake*case) with `<app>` = the repo-derived `kb_notion_mirror` (strip `mcp-` from the package
-name). This is the rule across the sibling MCPs — the tool prefix, frontmatter prefix
-(`kb_notion_mirror*_`), and env prefix (`MCP*KB_NOTION_MIRROR*_`) all share the `kb_notion_mirror` stem. Plural resource for collection ops,
-singular for single-item ops. Surface (14 tools):
+name). This is the rule across the sibling MCPs — the tool prefix, frontmatter prefix (`kb_notion_mirror*_`), and env prefix
+(`MCP*KB_NOTION_MIRROR*_`) all share the `kb_notion_mirror` stem. Plural resource for collection ops, singular for single-item ops. Surface
+(14 tools):
 
 - `note` (single-item): `kb_notion_mirror_note_{get,status,preflight,touch,update,move,delete}` —
   [src/tools/note/index.ts](./src/tools/note/index.ts).
@@ -175,8 +175,8 @@ invariant:
   false-fire).
 - Config is injected, so tests build a `Config`/`MirrorSettings` literal and pass it. A couple of modules keep process-lifetime caches
   (title-property cache, audit-log append queue) — their tests use the exported reset hook.
-- `bun run test:smoke` boots the built server over stdio and asserts the 14-tool wire surface. Keep `scripts/smoke.ts` `EXPECTED_TOOLS` in
-  sync with the three registration sites.
+- `bun run ki:test:smoke` boots the built server over stdio and asserts the 14-tool wire surface. Keep `scripts/smoke.ts` `EXPECTED_TOOLS`
+  in sync with the three registration sites.
 
 ## Tool registration call sites
 
