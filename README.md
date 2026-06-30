@@ -202,20 +202,20 @@ Restart Claude.
 
 ## Environment variables
 
-| Variable                                   | Required | Default                                           | Purpose                                                                                          |
-| ------------------------------------------ | -------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `MCP_KB_NOTION_MIRROR_TOKEN`               | yes      | —                                                 | Notion internal-integration secret (`ntn_…`).                                                    |
-| `MCP_KB_NOTION_MIRROR_KB_ROOT`             | no †     | unset                                             | Absolute KB root. `kb_path` / `subtree` resolve under it and are confined to it.                 |
-| `MCP_KB_NOTION_MIRROR_ACCESS_LEVEL`        | no       | `write`                                           | `read` / `write` / `destructive`.                                                                |
-| `MCP_KB_NOTION_MIRROR_BANNER_TEMPLATE`     | no       | KB default                                        | Banner copy; `{date}` → today's UTC date; `**bold**` honoured. Empty string disables the banner. |
-| `MCP_KB_NOTION_MIRROR_API_BASE_URL`        | no       | `https://api.notion.com`                          | Notion API base URL.                                                                             |
-| `MCP_KB_NOTION_MIRROR_SKIP_PREFIXES`       | no       | `+`                                               | Comma-separated filename prefixes excluded from tree walking.                                    |
-| `MCP_KB_NOTION_MIRROR_SKIP_PATHS`          | no       | (none)                                            | Comma-separated kb-paths excluded from tree walking.                                             |
-| `MCP_KB_NOTION_MIRROR_ICON_BASE_URL`       | no       | `https://unpkg.com/lucide-static@latest/icons`    | Base URL for Lucide-style external page icons.                                                   |
-| `MCP_KB_NOTION_MIRROR_AUDIT_LOG`           | no       | `writes`                                          | Audit-log scope. `off` / `writes` / `all`.                                                       |
-| `MCP_KB_NOTION_MIRROR_AUDIT_LOG_PATH`      | no       | `~/.local/state/mcp-kb-notion-mirror/audit.jsonl` | Path to the JSONL audit log.                                                                     |
-| `MCP_KB_NOTION_MIRROR_AUDIT_LOG_MAX_BYTES` | no       | `10485760` (10 MiB)                               | Size-based rotation threshold in bytes. `0` disables rotation.                                   |
-| `MCP_KB_NOTION_MIRROR_AUDIT_LOG_KEEP`      | no       | `5`                                               | Number of rotated audit-log files to retain.                                                     |
+| Variable | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `MCP_KB_NOTION_MIRROR_TOKEN` | yes | — | Notion internal-integration secret (`ntn_…`). |
+| `MCP_KB_NOTION_MIRROR_KB_ROOT` | no † | unset | Absolute KB root. `kb_path` / `subtree` resolve under it and are confined to it. |
+| `MCP_KB_NOTION_MIRROR_ACCESS_LEVEL` | no | `write` | `read` / `write` / `destructive`. |
+| `MCP_KB_NOTION_MIRROR_BANNER_TEMPLATE` | no | KB default | Banner copy; `{date}` → today's UTC date; `**bold**` honoured. Empty string disables the banner. |
+| `MCP_KB_NOTION_MIRROR_API_BASE_URL` | no | `https://api.notion.com` | Notion API base URL. |
+| `MCP_KB_NOTION_MIRROR_SKIP_PREFIXES` | no | `+` | Comma-separated filename prefixes excluded from tree walking. |
+| `MCP_KB_NOTION_MIRROR_SKIP_PATHS` | no | (none) | Comma-separated kb-paths excluded from tree walking. |
+| `MCP_KB_NOTION_MIRROR_ICON_BASE_URL` | no | `https://unpkg.com/lucide-static@latest/icons` | Base URL for Lucide-style external page icons. |
+| `MCP_KB_NOTION_MIRROR_AUDIT_LOG` | no | `writes` | Audit-log scope. `off` / `writes` / `all`. |
+| `MCP_KB_NOTION_MIRROR_AUDIT_LOG_PATH` | no | `~/.local/state/mcp-kb-notion-mirror/audit.jsonl` | Path to the JSONL audit log. |
+| `MCP_KB_NOTION_MIRROR_AUDIT_LOG_MAX_BYTES` | no | `10485760` (10 MiB) | Size-based rotation threshold in bytes. `0` disables rotation. |
+| `MCP_KB_NOTION_MIRROR_AUDIT_LOG_KEEP` | no | `5` | Number of rotated audit-log files to retain. |
 
 † The `tree` and `roots` tools require `MCP_KB_NOTION_MIRROR_KB_ROOT`; the `note` tools work with absolute `kb_path`s when it is unset.
 
